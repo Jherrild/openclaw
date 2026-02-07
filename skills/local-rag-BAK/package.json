@@ -1,0 +1,19 @@
+{
+  "name": "local-rag",
+  "version": "1.1.0",
+  "description": "Local RAG for Obsidian vault using ChromaDB (HTTP) + Ollama",
+  "main": "rag.js",
+  "scripts": {
+    "check": "node rag.js check",
+    "index": "node rag.js index",
+    "search": "node rag.js search",
+    "test": "node rag.js check"
+  },
+  "keywords": ["rag", "chromadb", "ollama", "obsidian"],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "node-fetch": "^3.3.2"
+  }
+}

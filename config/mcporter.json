@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "ha-stdio-final": {
+      "command": "mcp-proxy",
+      "args": [
+        "http://homeassistant:8123/api/mcp",
+        "--transport",
+        "streamablehttp",
+        "--headers",
+        "Authorization",
+        "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiIxYmMzZTczMTVjZDE0MTRhODllZDliMjY0ZTk4Mzk4ZiIsImlhdCI6MTc3MDQwNzM5MSwiZXhwIjoyMDg1NzY3MzkxfQ.Oa9elK99YgbymDJzKyf4Sd85cOqFtOizYC8xsRxWCb0"
+      ]
+    },
+    "obsidian-bridge": {
+      "command": "/home/jherrild/.openclaw/mcp-servers/obsidian/obsidian-mcp-bridge.sh"
+    }
+  },
+  "imports": []
+}

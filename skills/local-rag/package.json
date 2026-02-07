@@ -1,0 +1,16 @@
+{
+  "name": "local-rag",
+  "version": "2.0.0",
+  "description": "Local RAG for semantic search using SQLite + Ollama",
+  "main": "rag.js",
+  "type": "module",
+  "scripts": {
+    "index": "node rag.js index",
+    "search": "node rag.js search",
+    "query": "node rag.js query",
+    "check": "node rag.js check"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.0.0"
+  }
+}
