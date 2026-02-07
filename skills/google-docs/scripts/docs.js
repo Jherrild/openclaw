@@ -6,8 +6,7 @@ const {google} = require('googleapis');
 // Scopes for Google Docs and Google Drive (for searching/listing)
 const SCOPES = [
   'https://www.googleapis.com/auth/documents',
-  'https://www.googleapis.com/auth/drive.readonly',
-  'https://www.googleapis.com/auth/drive.file'
+  'https://www.googleapis.com/auth/drive'
 ];
 
 // Reuse credentials from google-tasks to save setup time
@@ -56,17 +55,19 @@ async function authorize() {
   const authUrl = oAuth2Client.generateAuthUrl({
     access_type: 'offline',
     scope: SCOPES,
+    prompt: 'consent'
   });
 
   console.log('Authorize this app by visiting this url:', authUrl);
   
-  const code = process.argv.find(arg => arg.startsWith('--code='));
-  if (!code) {
+  const codeArg = process.argv.find(arg => arg.startsWith('--code='));
+  if (!codeArg) {
     console.log('Restart script with --code=YOUR_CODE_HERE');
     process.exit(0);
   }
   
-  const {tokens} = await oAuth2Client.getToken(code.split('=')[1]);
+  const code = codeArg.split('=')[1];
+  const {tokens} = await oAuth2Client.getToken(code);
   oAuth2Client.setCredentials(tokens);
   await saveCredentials(oAuth2Client);
   return oAuth2Client;

@@ -1,2 +1,4 @@
 .magnus_op_auth
 .magnus_auth
+memory/*
+*token*

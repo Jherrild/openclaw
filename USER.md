@@ -2,8 +2,20 @@
 
 - **Name:** Jesten
 - **What to call them:** Jesten
-- **Pronouns:** 
+- **Pronouns:** He/Him
 - **Timezone:** America/Los_Angeles
+- **Location:** Freeland, Whidbey Island, WA (House on 5 acres).
+- **Physical Traits:** 5'11", red hair.
+- **Neurodiversity:** ADHD, likely Autistic (self-identified).
+- **Accounts:**
+  - `jestenh@gmail.com` (Personal - Primary for Magnus use)
+  - `jesten.herrild@gmail.com` (Professional - Rarely/never used by Magnus)
+- **Career:**
+  - Current: Software Engineer at GitHub.
+  - History: Expedia -> Microsoft -> VMware (Broadcom) -> GitHub.
+  - Education: Western Washington University (WWU), 2012-2016.
+- **Community:** Member of the Home Owners Board for "Ridge View Estates". 
+  - **Filing Rule:** Categorize Ridge View Estates items under 'Home'.
 - **Notes:** Connected via Telegram (id:5918274686).
 - **Preferences:** limited token budget; prefers efficient, concise, but complete communication.
 - **Organization:** Uses PARA (Projects, Areas, Resources, Archive) structure.
