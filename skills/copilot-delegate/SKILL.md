@@ -39,23 +39,37 @@ The only exception is trivial one-line config edits (changing a value in JSON, a
 
 ### copilot_delegate
 
-Run a coding task in non-interactive mode. Copilot reads files, makes changes, and writes a summary when done.
+Run a coding task in non-interactive mode. Copilot reads files, makes changes, and writes a summary when done. Can also resume a previous session.
 
 **Parameters:**
-- `prompt`: (Required) Detailed task description. Must end with the summary directive.
+- `-p <prompt>`: (Required for new tasks) Detailed task description. Must end with the summary directive.
 - `--model`: (Required) **You must always specify this flag.** The CLI does not default to a good model. Use `claude-opus-4.6` unless you have a specific reason to choose another (see model table below, or use the `copilot_models` tool to check available models).
+- `--resume <sessionId>`: (Optional) Resume a previous session instead of starting a new one. Omit `-p` when resuming.
+- `--continue`: (Optional) Resume the most recent session. Omit `-p` when using this.
 - `--add-dir`: (Optional) Additional directory access beyond workspace. Repeatable.
 
-**Usage:**
+**New task:**
 ```bash
 cd ~/.openclaw/workspace
 copilot -p "<your detailed prompt here>
 
-When finished, write a 2-3 sentence summary of what you did, what succeeded, and any issues to skills/copilot-delegate/last-result.md" \
+When finished, overwrite skills/copilot-delegate/last-result.md with a 2-3 sentence summary of what you did, what succeeded, and any issues. Replace the entire file contents." \
   --model claude-opus-4.6 \
   --allow-all \
   --share "skills/copilot-delegate/sessions/$(date +%s).md"
+
+# Save session ID for this skill so it can be resumed later
+ls -t ~/.copilot/session-state/ | head -1 > skills/<SKILL_NAME>/.copilot-session
 ```
+
+**Resume a skill's session:**
+```bash
+cd ~/.openclaw/workspace
+SESSION_ID=$(cat skills/<SKILL_NAME>/.copilot-session)
+copilot --resume "$SESSION_ID" --model claude-opus-4.6 --allow-all
+```
+
+Replace `<SKILL_NAME>` with the skill you're working on (e.g., `supernote-sync`).
 
 Then check the result:
 ```bash
@@ -63,14 +77,17 @@ echo "Exit code: $?"
 cat ~/.openclaw/workspace/skills/copilot-delegate/last-result.md
 ```
 
-### copilot_resume
+### copilot_session_lookup
 
-Resume a previously interrupted session.
+Find the saved Copilot session for a specific skill.
 
 **Usage:**
 ```bash
-cd ~/.openclaw/workspace
-copilot --continue --allow-all
+# Check if a skill has a saved session
+cat skills/<SKILL_NAME>/.copilot-session 2>/dev/null
+# If empty or missing, no saved session exists
+```
+# If empty or missing, no saved session exists
 ```
 
 ### copilot_models
@@ -194,7 +211,16 @@ grep -E "^(Created|Modified|Deleted|Edited)" skills/copilot-delegate/sessions/<t
 
 ## Important Rules
 
-1. **One at a time.** Never run multiple `copilot` instances simultaneously. They may conflict on file writes.
+1. **One at a time — enforce with process check.** Never run multiple `copilot` instances simultaneously. **Before every invocation**, check for an active process and wait if one is running:
+   ```bash
+   # MANDATORY: Always run this before invoking copilot
+   while pgrep -f "node.*\.npm-global/bin/copilot" > /dev/null 2>&1; do
+     echo "Copilot CLI is already running. Waiting 30s..."
+     sleep 30
+   done
+   ```
+   Note: The copilot CLI runs as `node ~/.npm-global/bin/copilot`, so we match that specific path. This won't match VS Code's Copilot extensions.
+   This is especially important for **sub-agents** — the main session may have already launched a Copilot process. Sub-agents must always check and wait.
 
 2. **Always include the summary directive.** Without it, you have no cheap way to know what happened.
 
