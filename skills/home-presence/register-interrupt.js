@@ -5,16 +5,18 @@
 // entities before saving. Wildcard patterns (e.g. 'light.*') skip validation.
 //
 // Usage:
-//   node register-interrupt.js persistent <entity_id> [--state <state>] [--label <label>] [--message <msg>] [--instruction <text>] [--skip-validation]
-//   node register-interrupt.js one-off    <entity_id> [--state <state>] [--label <label>] [--message <msg>] [--instruction <text>] [--skip-validation]
+//   node register-interrupt.js persistent <entity_id> [--state <state>] [--label <label>] [--message <msg>] [--instruction <text>] [--channel <channel>] [--skip-validation]
+//   node register-interrupt.js one-off    <entity_id> [--state <state>] [--label <label>] [--message <msg>] [--instruction <text>] [--channel <channel>] [--skip-validation]
 //   node register-interrupt.js list
 //   node register-interrupt.js remove <id>
 
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 
 const PERSISTENT_FILE = path.join(__dirname, 'persistent-interrupts.json');
 const ONEOFF_FILE = path.join(__dirname, 'one-off-interrupts.json');
+const CONFIG_FILE = path.join(__dirname, 'config.json');
 
 const HA_URL = 'http://homeassistant:8123';
 const TOKEN = (() => {
@@ -170,6 +172,42 @@ function readJson(filePath) {
   }
 }
 
+function readConfig() {
+  try {
+    return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+  } catch {
+    return { default_channel: 'telegram' };
+  }
+}
+
+/**
+ * Fetch valid notification channels from openclaw.
+ * Returns an array of channel names (e.g. ['telegram']).
+ */
+function fetchValidChannels() {
+  try {
+    const raw = execFileSync('openclaw', ['channels', 'list', '--json'], { encoding: 'utf8', timeout: 10000 });
+    const data = JSON.parse(raw);
+    return Object.keys(data.chat || {});
+  } catch {
+    return null; // validation impossible — offline / not installed
+  }
+}
+
+/**
+ * Validate a channel name.
+ * Returns { valid: true } or { valid: false, error: string }.
+ */
+function validateChannel(channel) {
+  if (channel === 'default') return { valid: true };
+  const channels = fetchValidChannels();
+  if (channels === null) {
+    return { valid: false, error: 'Cannot validate channel: failed to run "openclaw channels list --json". Use --skip-validation to bypass.' };
+  }
+  if (channels.includes(channel)) return { valid: true };
+  return { valid: false, error: `Invalid channel '${channel}'. Valid channels: ${channels.join(', ')}` };
+}
+
 function writeJson(filePath, data) {
   const bak = filePath + '.bak';
   if (fs.existsSync(filePath)) fs.copyFileSync(filePath, bak);
@@ -196,15 +234,18 @@ function parseArgs(argv) {
 
 function usage() {
   console.log(`Usage:
-  node register-interrupt.js persistent <entity_id> [--state <state>] [--label <label>] [--message <msg>] [--instruction <text>] [--skip-validation]
-  node register-interrupt.js one-off    <entity_id> [--state <state>] [--label <label>] [--message <msg>] [--instruction <text>] [--skip-validation]
+  node register-interrupt.js persistent <entity_id> [--state <state>] [--label <label>] [--message <msg>] [--instruction <text>] [--channel <channel>] [--skip-validation]
+  node register-interrupt.js one-off    <entity_id> [--state <state>] [--label <label>] [--message <msg>] [--instruction <text>] [--channel <channel>] [--skip-validation]
   node register-interrupt.js list
   node register-interrupt.js remove <id>
 
 Options:
-  --skip-validation   Skip live entity validation against Home Assistant
+  --skip-validation   Skip live entity and channel validation
   --instruction       Custom context/instructions appended to the system event when the interrupt fires.
                       Use this to tell the agent HOW to react (e.g., "announce via TTS", "log but don't wake").
+  --channel           Notification channel to use when dispatching (e.g., "telegram").
+                      If omitted, defaults to "default" which resolves to config.json's default_channel at dispatch time.
+                      Valid channels are retrieved from "openclaw channels list --json".
 
 Examples:
   # Alert when front door motion is detected
@@ -212,6 +253,9 @@ Examples:
 
   # One-off alert when Jesten arrives home, with instructions for the agent
   node register-interrupt.js one-off person.jesten --state home --label "Jesten arrived" --instruction "Greet Jesten warmly via follow-and-speak"
+
+  # Specify a notification channel explicitly
+  node register-interrupt.js persistent binary_sensor.front_door_motion --state on --label "Front door" --channel telegram
 
   # Wildcard: any light turning on (wildcard skips entity existence check)
   node register-interrupt.js persistent "light.*" --state on --label "Light activated"
@@ -236,6 +280,7 @@ Interrupt schema:
     "label": "Front door motion",
     "message": "custom message text",  // optional — used in the system event
     "instruction": "Tell the agent how to react",  // optional — appended to system event
+    "channel": "default",     // optional — notification channel ("default" resolves to config.json)
     "created": "ISO timestamp"
   }
 
@@ -244,6 +289,7 @@ Validation:
   If the entity doesn't exist, you'll get suggestions for similar entities.
   Wildcard patterns (e.g. 'light.*') skip entity existence checks.
   State values are validated against known domain states (e.g. binary_sensor: on/off).
+  Channel names are validated against "openclaw channels list --json".
   Use --skip-validation to bypass all checks.`);
 }
 
@@ -261,8 +307,10 @@ if (!command || command === 'help' || command === '--help') {
 if (command === 'list') {
   const persistent = readJson(PERSISTENT_FILE);
   const oneOff = readJson(ONEOFF_FILE);
+  const config = readConfig();
   const formatRule = r => {
-    let line = `  [${r.id}] ${r.entity_id}${r.state != null ? ` = ${r.state}` : ' (any)'} — ${r.label || '(no label)'}`;
+    const ch = r.channel && r.channel !== 'default' ? r.channel : `default (${config.default_channel})`;
+    let line = `  [${r.id}] ${r.entity_id}${r.state != null ? ` = ${r.state}` : ' (any)'} — ${r.label || '(no label)'} [channel: ${ch}]`;
     if (r.instruction) line += `\n    instruction: ${r.instruction}`;
     return line;
   };
@@ -307,6 +355,16 @@ if (command === 'persistent' || command === 'one-off') {
       }
     }
 
+    // Determine and validate channel
+    const channel = args.channel || 'default';
+    if (!skipValidation) {
+      const chValidation = validateChannel(channel);
+      if (!chValidation.valid) {
+        console.error(`Validation failed: ${chValidation.error}`);
+        process.exit(1);
+      }
+    }
+
     const rule = {
       id: generateId(),
       entity_id: entityId,
@@ -314,6 +372,7 @@ if (command === 'persistent' || command === 'one-off') {
       label: args.label || entityId,
       message: args.message || null,
       instruction: args.instruction || null,
+      channel: channel,
       created: new Date().toISOString(),
     };
 

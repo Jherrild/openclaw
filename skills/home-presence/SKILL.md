@@ -172,6 +172,7 @@ The bridge includes an **Intelligent Interrupt Dispatcher** (`interrupt-manager.
   "label": "Front door motion",
   "message": "Motion detected at front door",
   "instruction": "Check if anyone is expected; if not, announce security alert via follow-and-speak",
+  "channel": "default",
   "created": "2026-02-08T22:00:00.000Z"
 }
 ```
@@ -184,6 +185,7 @@ The bridge includes an **Intelligent Interrupt Dispatcher** (`interrupt-manager.
 | `label` | No | Human-readable name for logging |
 | `message` | No | Custom text for the `openclaw system event`. If omitted, a default is generated. |
 | `instruction` | No | Custom instructions/context appended to the system event text when the interrupt fires. Use this to tell the agent HOW to react (e.g., "announce via TTS", "log and summarize"). |
+| `channel` | No | Notification channel for dispatch (e.g., `telegram`). If `"default"` or omitted, resolves to `config.json`'s `default_channel` at dispatch time. |
 | `created` | No | ISO timestamp of rule creation |
 
 #### Batching, Rate Limiting, and Circuit Breaker
@@ -208,6 +210,9 @@ node /home/jherrild/.openclaw/workspace/skills/home-presence/register-interrupt.
 # Add an interrupt with custom instructions for the agent
 node /home/jherrild/.openclaw/workspace/skills/home-presence/register-interrupt.js persistent binary_sensor.front_door_motion --state on --label "Front door" --instruction "Check if anyone is expected; if not, announce security alert via follow-and-speak"
 
+# Specify a notification channel explicitly
+node /home/jherrild/.openclaw/workspace/skills/home-presence/register-interrupt.js persistent binary_sensor.front_door_motion --state on --label "Front door" --channel telegram
+
 # Wildcard: any light turning on (skips entity existence check, validates state)
 node /home/jherrild/.openclaw/workspace/skills/home-presence/register-interrupt.js persistent "light.*" --state on --label "Light activated"
 
@@ -224,8 +229,40 @@ node /home/jherrild/.openclaw/workspace/skills/home-presence/register-interrupt.
 **Validation behavior:**
 - **Entity existence:** Checked via `GET /api/states` against live HA. If not found, returns 3–5 similar entity name suggestions.
 - **State plausibility:** Checked against known domain states (e.g. `binary_sensor`: `on`/`off`, `person`: `home`/`not_home`). Domains without a known state list (e.g. `sensor`) skip this check.
+- **Channel:** Validated against `openclaw channels list --json` (the keys under `.chat`). The special value `"default"` is always valid and resolves to `config.json`'s `default_channel` at dispatch time.
 - **Wildcards:** Patterns containing `*` skip entity existence checks but still validate state if provided.
 - **Bypass:** Pass `--skip-validation` to skip all checks.
+
+### Notification Channel Configuration
+
+Interrupts are dispatched to a **notification channel** (e.g., `telegram`). Each interrupt rule can specify a `channel`; if omitted or set to `"default"`, it resolves to the `default_channel` in `config.json` at dispatch time.
+
+**Config file:** `skills/home-presence/config.json`
+```json
+{
+  "default_channel": "telegram"
+}
+```
+
+**Managing the default channel:**
+```bash
+# View current default channel
+node /home/jherrild/.openclaw/workspace/skills/home-presence/manage-channel.js get
+
+# Update default channel (validates against openclaw)
+node /home/jherrild/.openclaw/workspace/skills/home-presence/manage-channel.js set telegram
+
+# Update without validation
+node /home/jherrild/.openclaw/workspace/skills/home-presence/manage-channel.js set whatsapp --skip-validation
+
+# List valid channels from openclaw
+node /home/jherrild/.openclaw/workspace/skills/home-presence/manage-channel.js list-valid
+```
+
+**Channel routing at dispatch time:**
+1. Each matched interrupt rule's `channel` field is read.
+2. If `channel` is `"default"` (or absent), it is resolved to `config.json`'s `default_channel`.
+3. Triggers are grouped by resolved channel and dispatched as separate `openclaw system event` calls, each instructing the agent to notify on the appropriate channel.
 
 ### What It Does
 

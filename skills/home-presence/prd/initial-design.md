@@ -64,6 +64,7 @@ The bridge was further refactored from hard-coded entity ID filtering to **dynam
 | Intelligent Interrupt Dispatcher | ✅ Done | 2026-02-08 — batching, rate limiting, circuit breaker |
 | `register-interrupt.js` CLI | ✅ Done | 2026-02-08 — add/list/remove rules |
 | Interrupt `instruction` field | ✅ Done | 2026-02-08 — optional custom context appended to system events |
+| Configurable notification channels | ✅ Done | 2026-02-08 — per-rule `channel` field, `config.json` default, `manage-channel.js` utility |
 
 ## Implementation Notes
 - Use the existing bearer token from the `ha-stdio-final` configuration for any direct API calls if the MCP tools are insufficient.
@@ -102,6 +103,21 @@ The bridge now supports an **Intelligent Interrupt Dispatcher** via `interrupt-m
 - One-off rules removed immediately after queuing (before dispatch) to prevent duplicates
 - Circuit breaker is automatic — no manual reset needed
 
+### Configurable Notification Channels (added 2026-02-08)
+
+Interrupt rules now support a `channel` field that specifies which notification channel to use when dispatching:
+
+- **Per-rule channel:** Each interrupt rule can specify `"channel": "telegram"` (or any valid channel).
+- **Default channel:** If `channel` is `"default"` or omitted, it resolves to `config.json`'s `default_channel` at dispatch time.
+- **Validation:** Channel names are validated against `openclaw channels list --json` (the keys under `.chat`) before saving. Use `--skip-validation` to bypass.
+- **Grouped dispatch:** At dispatch time, triggers are grouped by resolved channel and sent as separate system events, each instructing the agent to notify on the appropriate channel.
+- **`manage-channel.js`:** Utility script for viewing/updating the `default_channel` in `config.json`.
+
+**Key design choices:**
+- Late resolution: `"default"` is resolved at dispatch time (not registration time), so changing `config.json` affects all existing default-channel rules without re-registration.
+- Channel validation uses `openclaw channels list --json` synchronously via `execFileSync` — acceptable since registration is a rare, interactive operation.
+- `config.json` uses `.bak` backup pattern consistent with interrupt JSON files.
+
 ## Decided NOT to Do
 
 | Idea | Why Not |
@@ -116,6 +132,7 @@ The bridge now supports an **Intelligent Interrupt Dispatcher** via `interrupt-m
 - [ ] Consider a heartbeat or cron job that periodically reads `presence-log.jsonl` and summarizes presence patterns for Magnus
 - [ ] Populate `WAKE_ON_ENTITIES` when specific use cases arise (e.g., security alerts)
 - [ ] Add pre-built interrupt templates (e.g., security, arrival/departure) via `register-interrupt.js`
+- [ ] Add additional notification channels (e.g., WhatsApp) as they are configured in openclaw
 
 ## Known Entity Names (Office Lights)
 

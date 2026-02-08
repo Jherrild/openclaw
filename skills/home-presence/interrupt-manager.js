@@ -10,6 +10,7 @@ const { execFile } = require('child_process');
 
 const PERSISTENT_FILE = path.join(__dirname, 'persistent-interrupts.json');
 const ONEOFF_FILE = path.join(__dirname, 'one-off-interrupts.json');
+const CONFIG_FILE = path.join(__dirname, 'config.json');
 const STATUS_LOG = path.join(__dirname, 'ha-bridge.status.log');
 
 const BATCH_WINDOW_MS = 5000;
@@ -31,6 +32,14 @@ class InterruptManager {
   }
 
   // ── File I/O ──────────────────────────────────────────────────────────────
+
+  _readConfig() {
+    try {
+      return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+    } catch {
+      return { default_channel: 'telegram' };
+    }
+  }
 
   _loadFiles() {
     this.persistent = this._readJson(PERSISTENT_FILE);
@@ -109,6 +118,7 @@ class InterruptManager {
         new_state: newState,
         message: rule.message || `${rule.label || rule.id}: ${entityId} → ${newState}`,
         instruction: rule.instruction || null,
+        channel: rule.channel || 'default',
       });
     }
   }
@@ -174,23 +184,37 @@ class InterruptManager {
   // ── Dispatch ──────────────────────────────────────────────────────────────
 
   _dispatch(batch) {
-    const summaries = batch.map(b => {
-      let s = b.message;
-      if (b.instruction) s += ` [instruction: ${b.instruction}]`;
-      return s;
-    });
-    const text = `home-presence interrupt: ${summaries.join(' | ')}`;
+    // Resolve channels: 'default' → config.json's default_channel at dispatch time
+    const config = this._readConfig();
+    const resolveChannel = (ch) => (!ch || ch === 'default') ? config.default_channel : ch;
 
-    this._statusLog('info', `Dispatching openclaw system event: ${text}`);
+    // Group triggers by resolved channel
+    const byChannel = {};
+    for (const b of batch) {
+      const ch = resolveChannel(b.channel);
+      if (!byChannel[ch]) byChannel[ch] = [];
+      byChannel[ch].push(b);
+    }
 
-    execFile('openclaw', ['system', 'event', '--text', text, '--mode', 'now'], (err, stdout, stderr) => {
-      if (err) {
-        this._statusLog('error', `openclaw system event failed: ${err.message}`);
-        if (stderr) this._statusLog('error', `  stderr: ${stderr.trim()}`);
-      } else {
-        this._statusLog('info', `Dispatch successful (${batch.length} interrupt(s))`);
-      }
-    });
+    for (const [channel, triggers] of Object.entries(byChannel)) {
+      const summaries = triggers.map(b => {
+        let s = b.message;
+        if (b.instruction) s += ` [instruction: ${b.instruction}]`;
+        return s;
+      });
+      const text = `home-presence interrupt: ${summaries.join(' | ')} [instruction: use message tool to notify user on '${channel}']`;
+
+      this._statusLog('info', `Dispatching openclaw system event (channel: ${channel}): ${text}`);
+
+      execFile('openclaw', ['system', 'event', '--text', text, '--mode', 'now'], (err, stdout, stderr) => {
+        if (err) {
+          this._statusLog('error', `openclaw system event failed: ${err.message}`);
+          if (stderr) this._statusLog('error', `  stderr: ${stderr.trim()}`);
+        } else {
+          this._statusLog('info', `Dispatch successful (${triggers.length} interrupt(s), channel: ${channel})`);
+        }
+      });
+    }
   }
 
   // ── Cleanup ───────────────────────────────────────────────────────────────
