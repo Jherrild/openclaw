@@ -27,6 +27,7 @@ Automate the synchronization of `.note` files from Google Drive to the Obsidian 
 | `gog drive ls` for discovery | `get_remote_state.js` | Same — uses existing token at `../google-docs/scripts/token.json` |
 | `gog drive download` for files | `download_file.js` | Same |
 | PRD code blocks as implementation | Separate `.sh` / `.js` files | Better maintainability |
+| Agent downloads files from Drive | Script pre-downloads all files to `buffer/` | Decouples Magnus from Google Drive auth entirely; agent only works with local files |
 
 ### Decided NOT To Do
 | Idea | Reason |
@@ -47,6 +48,8 @@ Automate the synchronization of `.note` files from Google Drive to the Obsidian 
 | 7 | `.agent-pending` lockfile created a deadlock — if agent failed, lock stayed forever and no re-wake would occur | Added 30-minute staleness check; stale locks are deleted and agent is re-woken | 2026-02-07 |
 | 8 | `get_remote_state.js` didn't paginate — would silently miss files beyond the first 100 | Added `nextPageToken` loop to fetch all pages | 2026-02-07 |
 | 9 | SKILL.md categorization rules were too generic | Enriched with context-aware heuristics (e.g., "Board Meeting" → Home area, not generic meetings) | 2026-02-07 |
+| 10 | Lost/corrupted `sync-mapping.json` would treat all files as new, wasting tokens and risking overwrites | Added: `.bak` backup each run, vault search dedup before moving, skip-move-if-exists guard | 2026-02-07 |
+| 11 | Magnus needed Google Drive auth to download files, causing repeated failures when token/auth context was stale | Script now pre-downloads ALL files (new + updated) to `buffer/`; Magnus only works with local files | 2026-02-07 |
 
 ### Still TODO
 - [ ] Magnus needs to process the initial 25 files (categorize + populate mapping)
@@ -62,21 +65,24 @@ Automate the synchronization of `.note` files from Google Drive to the Obsidian 
 3.  **Discovery (Bash + Node.js):**
     - `check-and-sync.sh` calls `get_remote_state.js` to index all remote `.note` files in source folder (`19NabfLOmVIvqNZmI0PJYOwSLcPUSiLkK`).
     - Compares against `sync-mapping.json` containing `fileId`, `remoteName`, `localPath`, and `lastModified`.
-4.  **Path A: Non-Intelligent Update (Bash + Node.js, zero tokens):**
+4.  **Path A: Non-Intelligent Update (Script only, zero tokens):**
     - If a file is **KNOWN** (exists in mapping) but **UPDATED** (remote timestamp > local timestamp):
-      - Download it directly to its mapped `localPath` using `node download_file.js`.
+      - Script downloads it to `buffer/`, then copies to its mapped `localPath`.
       - Update the timestamp in the mapping.
-      - **Zero token cost.**
+      - **Zero token cost.** Magnus is informed but takes no action.
 5.  **Path B: Intelligent Filing (Agent Assisted):**
     - If a file is **NEW** (not in mapping):
+      - Script downloads it to `buffer/`.
       - **Wake up Magnus (the Agent)** via `openclaw system event`.
-      - Magnus downloads the new file(s) using `node download_file.js`.
-      - Magnus categorizes by filename heuristics into the PARA structure.
-      - Magnus adds the new mapping(s) to `sync-mapping.json`.
-      - Magnus moves files to final destination.
-      - Magnus removes `.agent-pending` lockfile on completion.
+      - Magnus reads `.agent-pending` manifest (JSON with `"new"` and `"updated"` arrays).
+      - Magnus categorizes new files by filename heuristics into the PARA structure.
+      - Magnus uses `local-rag` to search vault for duplicates before placing.
+      - Magnus uses `obsidian-scribe` tools to move files to vault.
+      - Magnus adds new mapping(s) to `sync-mapping.json`.
+      - Magnus removes `.agent-pending` lockfile and `buffer/` on completion.
       - **Optimized:** Batch multiple new files into a single agent turn.
       - **Guard:** Won't re-wake if `.agent-pending` lockfile exists (<30 min old). Stale locks are auto-cleared.
+      - **Decoupled:** Magnus never touches Google Drive — all files are local.
 6.  **Reliability:** Log all sync activities; handle network/auth errors gracefully. Log auto-rotates at 500 lines.
 
 ---
@@ -107,10 +113,13 @@ Automate the synchronization of `.note` files from Google Drive to the Obsidian 
 
 **Key behaviors:**
 - Fetches remote file list via `node get_remote_state.js`
-- Path A: downloads known-but-updated files via `node download_file.js`, updates mapping timestamp
-- Path B: accumulates new file IDs, wakes agent once with the full batch
-- Re-wake guard: writes `.agent-pending` lockfile when waking; skips wake if lockfile <30 min old; auto-clears stale locks and re-wakes
+- Downloads ALL changed files (new + updated) to `buffer/` directory
+- Path A (updated): copies from `buffer/` to mapped vault path, updates mapping timestamp
+- Path B (new): leaves in `buffer/`, builds JSON manifest, wakes agent
+- `.agent-pending` manifest contains `{"new": [...], "updated": [...]}` — agent only needs to process `"new"`
+- Re-wake guard: writes `.agent-pending` when waking; skips wake if lockfile <30 min old; auto-clears stale locks
 - Log rotation: trims `sync.log` to 500 lines at script start
+- Backs up `sync-mapping.json` to `.bak` before each run
 
 ### Script 2: `get_remote_state.js`
 
@@ -126,37 +135,26 @@ Downloads a single file by ID:
 node download_file.js <fileId> <destPath>
 ```
 
-### Magnus's Role (Path B — The Intelligent Handshake)
+### Magnus's Role (Path B — Local File Categorization)
 
-**Trigger:** System event matching pattern `supernote-sync: new files [...]`
+**Trigger:** System event matching pattern `supernote-sync: ... new file(s) downloaded to buffer`
 
-**Event Payload Format:**
-```
-supernote-sync: new files ["1XFK...", "2YGL..."]
-```
+Magnus does **not** need Google Drive access. All files are pre-downloaded by the script.
 
 **Processing Steps:**
 
-1. **Parse Event:** Extract file IDs from the event text.
-2. **Download to Buffer:**
-   ```bash
-   SKILL_DIR="$HOME/.openclaw/workspace/skills/supernote-sync"
-   NODE_PATH="$HOME/.openclaw/workspace/skills/google-tasks/node_modules"
-   mkdir -p /tmp/supernote-buffer
-   for id in $(echo "$FILE_IDS" | jq -r '.[]'); do
-     export NODE_PATH && node "$SKILL_DIR/download_file.js" "$id" "/tmp/supernote-buffer/$id.note"
-   done
-   ```
-3. **Categorize Files** using PARA heuristics (see below).
-4. **Update Mapping** in `sync-mapping.json`.
-5. **Move to Final Destination** and `mkdir -p` parent dirs.
-6. **Cleanup:** `rm -rf /tmp/supernote-buffer`
-7. **Remove lockfile:** `rm -f "$SKILL_DIR/.agent-pending"`
+1. **Read Manifest:** `cat .agent-pending | jq .` — contains `"new"` (needs categorization) and `"updated"` (informational only).
+2. **List Buffer:** `ls buffer/` — new files are here as `<filename>.note`.
+3. **Search Vault:** Use `local-rag` to check for existing files with same name before categorizing.
+4. **Categorize Files** using PARA heuristics (see SKILL.md for full rules).
+5. **Place in Vault** using `obsidian-scribe` `scribe_move` tool.
+6. **Update Mapping** in `sync-mapping.json` with fileId, name, destination path, and modifiedTime from manifest.
+7. **Cleanup:** `rm -rf buffer/` and `rm -f .agent-pending`.
 
 **Error Handling:**
-- If download fails: Log error, skip file, continue with others.
 - If categorization uncertain: Default to inbox path, log for review.
-- If move fails (permissions, path doesn't exist): Create parent dirs, retry once.
+- If move fails: Create parent dirs, retry once.
+- Always remove `.agent-pending` on completion (even partial failure).
 
 ---
 
@@ -164,11 +162,14 @@ supernote-sync: new files ["1XFK...", "2YGL..."]
 
 | File | Purpose | Status |
 |------|---------|--------|
-| `check-and-sync.sh` | Cron target: updates + new file detection | ✅ Working |
-| `get_remote_state.js` | Node.js: list remote `.note` files | ✅ Working |
+| `check-and-sync.sh` | Cron target: downloads all files, updates known, buffers new, wakes agent | ✅ Working |
+| `get_remote_state.js` | Node.js: list remote `.note` files (paginated) | ✅ Working |
 | `download_file.js` | Node.js: download file by ID | ✅ Fixed (v3) |
 | `sync-mapping.json` | Persistent file mapping (fileId → localPath) | ✅ Schema ready, empty pending agent |
-| `sync.log` | Rolling log of sync operations | ✅ Auto-rotating |
+| `sync-mapping.json.bak` | Auto-backup before each run | ✅ Auto-created |
+| `buffer/` | Pre-downloaded files for agent processing | ✅ Created by script |
+| `.agent-pending` | JSON manifest (`new` + `updated` arrays) and lockfile | ✅ Created by script, deleted by agent |
+| `sync.log` | Rolling log of sync operations | ✅ Auto-rotating (500 lines) |
 | `SKILL.md` | Agent instructions for Path B | ✅ Updated (v3) |
 | `PRD.md` | This document | ✅ Current |
 
