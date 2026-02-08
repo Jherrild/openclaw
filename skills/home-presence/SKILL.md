@@ -189,39 +189,37 @@ wc -l /home/jherrild/.openclaw/workspace/skills/home-presence/presence-log.jsonl
 
 All person entities (`person.jesten`, `person.april_jane`) and all occupancy/motion sensors listed in the Presence Sensors table above.
 
-### Starting the Bridge
+### Starting the Bridge (systemd — preferred)
+
+The bridge runs as a systemd user service (`ha-bridge.service`), which auto-restarts on failure and starts on login.
 
 ```bash
-# Start in background (detached)
-nohup node /home/jherrild/.openclaw/workspace/skills/home-presence/ha-bridge.js >> /tmp/ha-bridge.log 2>&1 &
+# Start / restart
+systemctl --user start ha-bridge.service
 
-# Or with env overrides
-HA_WS_URL=ws://192.168.1.50:8123/api/websocket HA_TOKEN=your_token node ha-bridge.js
+# Enable auto-start on login (already enabled)
+systemctl --user enable ha-bridge.service
 ```
 
-> **Note:** Presence events are written to `presence-log.jsonl` in the skill directory. Console/stderr output (connection status, errors) still goes to `/tmp/ha-bridge.log`.
+> **Logs:** Status and connection logs go to `ha-bridge.status.log` in the skill directory. Presence events go to `presence-log.jsonl`.
 
 ### Checking Status
 
 ```bash
-# Check if running (excludes vscode false positives)
-pgrep -f 'node.*ha-bridge\.js' | while read pid; do
-  cmdline=$(cat /proc/$pid/cmdline 2>/dev/null | tr '\0' ' ')
-  echo "$cmdline" | grep -qv vscode && echo "Running: PID $pid"
-done
+# Quick health check
+systemctl --user is-active ha-bridge.service
+
+# Detailed status
+systemctl --user status ha-bridge.service
 
 # View recent logs
-tail -50 /tmp/ha-bridge.log
+tail -50 /home/jherrild/.openclaw/workspace/skills/home-presence/ha-bridge.status.log
 ```
 
 ### Stopping the Bridge
 
 ```bash
-# Find the PID (filtering out vscode)
-pgrep -f 'node.*ha-bridge\.js' | while read pid; do
-  cmdline=$(cat /proc/$pid/cmdline 2>/dev/null | tr '\0' ' ')
-  echo "$cmdline" | grep -qv vscode && kill "$pid" && echo "Stopped PID $pid"
-done
+systemctl --user stop ha-bridge.service
 ```
 
 ### Event Format (in presence-log.jsonl)

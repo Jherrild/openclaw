@@ -302,7 +302,7 @@ function connect() {
 function checkAlreadyRunning() {
   const { execSync } = require('child_process');
   try {
-    // Find ha-bridge.js processes, exclude this PID and any vscode-related processes
+    // Find ha-bridge.js processes, exclude this PID
     const output = execSync(
       `pgrep -f 'node.*ha-bridge\\.js' | grep -v '^${process.pid}$' || true`,
       { encoding: 'utf8' }
@@ -310,12 +310,15 @@ function checkAlreadyRunning() {
 
     if (!output) return false;
 
-    // Filter out vscode server processes (common false positives)
+    // Filter out vscode and copilot CLI processes (common false positives
+    // where 'ha-bridge.js' appears as a substring in their arguments)
     const pids = output.split('\n').filter(pid => {
       if (!pid) return false;
       try {
         const cmdline = execSync(`cat /proc/${pid}/cmdline 2>/dev/null || true`, { encoding: 'utf8' });
-        return !cmdline.includes('vscode') && !cmdline.includes('.vscode');
+        if (cmdline.includes('vscode') || cmdline.includes('.vscode')) return false;
+        if (cmdline.includes('copilot')) return false;
+        return true;
       } catch { return false; }
     });
 

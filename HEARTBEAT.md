@@ -6,5 +6,6 @@
 - **[INBOX] Voice Note Monitor:** Check `/home/jherrild/.openclaw/voice_notes/` for new files. 
   - If found: Spawn a sub-agent to transcribe, determine PARA destination, and file via `obsidian-scribe`.
   - Move processed files to `/home/jherrild/.openclaw/voice_notes/processed/`.
+- **[SERVICE] HA Bridge Health:** Run `systemctl --user is-active ha-bridge.service` to confirm it's running. If inactive, restart with `systemctl --user restart ha-bridge.service`. Check `tail -5 skills/home-presence/ha-bridge.status.log` for recent errors.
 - Nudge Jesten if high-priority tasks are lingering without progress.
 - Maintain a list of "In Progress" tasks in memory/YYYY-MM-DD.md.
