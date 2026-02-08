@@ -1,1 +1,10 @@
-[]
+[
+  {
+    "id": "int-mlebcsxy-jvul",
+    "entity_id": "light.office",
+    "state": "on",
+    "label": "Office lights turned on",
+    "message": null,
+    "created": "2026-02-08T22:27:18.790Z"
+  }
+]

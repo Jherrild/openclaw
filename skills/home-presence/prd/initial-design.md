@@ -115,6 +115,17 @@ The bridge now supports an **Intelligent Interrupt Dispatcher** via `interrupt-m
 - [ ] Populate `WAKE_ON_ENTITIES` when specific use cases arise (e.g., security alerts)
 - [ ] Add pre-built interrupt templates (e.g., security, arrival/departure) via `register-interrupt.js`
 
+## Known Entity Names (Office Lights)
+
+The office lighting group is `light.office`, **not** `light.office_lights`. Individual bulbs are `light.office_one`, `light.office_two`, `light.office_three`.
+
+## Bug Fixes
+
+| # | Date | Description | Fix |
+|---|------|-------------|-----|
+| 1 | 2026-02-08 | One-off interrupt for office lights used non-existent entity `light.office_lights` — never fired | Changed to `light.office` in `one-off-interrupts.json` |
+| 2 | 2026-02-08 | No debug tooling to identify correct entity names from live WebSocket stream | Added SIGUSR1-triggered debug dump mode to `ha-bridge.js` — writes all entity IDs to `debug-entities.log` for 30s |
+
 ## Tasks for Copilot
 1. ~~Scrutinize the `ha-stdio-final` MCP capabilities to see if `tts.speak` can be called via a generic "call service" tool (if one exists but was hidden) or if raw API calls are needed.~~ Done — raw REST API needed.
 2. ~~Create a script (`presence.js` or similar) to wrap these behaviors.~~ Done.

@@ -298,6 +298,31 @@ tail -50 /home/jherrild/.openclaw/workspace/skills/home-presence/ha-bridge.statu
 systemctl --user stop ha-bridge.service
 ```
 
+### Debug Entity Dump
+
+To see **all** incoming entity IDs (including those filtered as no-change), send `SIGUSR1` to the running bridge process. This dumps every entity ID to `debug-entities.log` for 30 seconds, then stops automatically.
+
+```bash
+# Trigger a 30-second debug dump
+kill -USR1 $(pgrep -f 'node.*ha-bridge\.js')
+
+# Watch the output
+tail -f /home/jherrild/.openclaw/workspace/skills/home-presence/debug-entities.log
+```
+
+### Known Light Entities (Office)
+
+The office lights use these entity IDs in Home Assistant:
+
+| Entity | Description |
+|--------|-------------|
+| `light.office` | Group entity (all office lights) |
+| `light.office_one` | Individual bulb 1 |
+| `light.office_two` | Individual bulb 2 |
+| `light.office_three` | Individual bulb 3 |
+
+> **Note:** There is no `light.office_lights` entity. Use `light.office` for the group.
+
 ### Event Format (in presence-log.jsonl)
 
 Events follow this format in the `summary` field:

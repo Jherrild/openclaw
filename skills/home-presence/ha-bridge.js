@@ -139,6 +139,31 @@ let pingTimer = null;
 let pongTimer = null;
 let shuttingDown = false;
 
+// ── Debug Entity Dump (SIGUSR1) ─────────────────────────────────────────────
+// Send SIGUSR1 to dump ALL incoming entity IDs to debug-entities.log for 30s.
+let debugDumpActive = false;
+let debugDumpTimer = null;
+const DEBUG_DUMP_FILE = path.join(__dirname, 'debug-entities.log');
+const DEBUG_DUMP_DURATION_MS = 30000;
+
+process.on('SIGUSR1', () => {
+  if (debugDumpActive) {
+    log('info', '[DEBUG] Debug dump already active — ignoring SIGUSR1');
+    return;
+  }
+  debugDumpActive = true;
+  const header = `\n=== DEBUG ENTITY DUMP STARTED ${new Date().toISOString()} (${DEBUG_DUMP_DURATION_MS / 1000}s) ===\n`;
+  try { fs.appendFileSync(DEBUG_DUMP_FILE, header); } catch {}
+  log('info', `[DEBUG] Entity dump started — writing ALL entity IDs to ${DEBUG_DUMP_FILE} for ${DEBUG_DUMP_DURATION_MS / 1000}s`);
+  debugDumpTimer = setTimeout(() => {
+    debugDumpActive = false;
+    debugDumpTimer = null;
+    const footer = `=== DEBUG ENTITY DUMP ENDED ${new Date().toISOString()} ===\n`;
+    try { fs.appendFileSync(DEBUG_DUMP_FILE, footer); } catch {}
+    log('info', '[DEBUG] Entity dump ended');
+  }, DEBUG_DUMP_DURATION_MS);
+});
+
 // ── Intelligent Interrupt Dispatcher ────────────────────────────────────────
 const interruptManager = new InterruptManager();
 
@@ -301,6 +326,14 @@ function connect() {
         const data = msg.event && msg.event.data;
         if (!data || !data.entity_id) break;
 
+        // Debug dump: log ALL entity IDs before any filtering
+        if (debugDumpActive) {
+          const oldDbg = data.old_state ? data.old_state.state : '?';
+          const newDbg = data.new_state ? data.new_state.state : '?';
+          const line = `${new Date().toISOString()} ${data.entity_id} ${oldDbg} → ${newDbg}\n`;
+          try { fs.appendFileSync(DEBUG_DUMP_FILE, line); } catch {}
+        }
+
         const oldState = data.old_state ? data.old_state.state : 'unknown';
         const newState = data.new_state ? data.new_state.state : 'unknown';
         if (oldState === newState) break; // no actual state change
@@ -410,6 +443,7 @@ function shutdown(signal) {
   log('info', `Received ${signal} — shutting down`);
   shuttingDown = true;
   clearTimers();
+  if (debugDumpTimer) { clearTimeout(debugDumpTimer); debugDumpTimer = null; }
   interruptManager.destroy();
   if (ws) {
     ws.close();
