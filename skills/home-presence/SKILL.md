@@ -194,17 +194,20 @@ All interrupt activity (queued, batched, dispatched, rate-limited) is logged to 
 
 #### Registering Interrupts (CLI)
 
-Use `register-interrupt.js` to manage interrupt rules:
+Use `register-interrupt.js` to manage interrupt rules. Entity IDs are **validated against live Home Assistant entities** before saving — if an entity doesn't exist, the registration is rejected with suggestions for similar entity names. Wildcard patterns (e.g. `light.*`) skip entity existence checks. State values are validated against known domain states (e.g. `binary_sensor` must be `on`/`off`). Use `--skip-validation` to bypass all checks (e.g. when HA is temporarily unavailable).
 
 ```bash
-# Add a persistent interrupt
+# Add a persistent interrupt (entity validated against live HA)
 node /home/jherrild/.openclaw/workspace/skills/home-presence/register-interrupt.js persistent binary_sensor.front_door_motion --state on --label "Front door motion"
 
 # Add a one-off interrupt (auto-removed after firing)
 node /home/jherrild/.openclaw/workspace/skills/home-presence/register-interrupt.js one-off person.jesten --state home --label "Jesten arrived"
 
-# Wildcard: any light turning on
+# Wildcard: any light turning on (skips entity existence check, validates state)
 node /home/jherrild/.openclaw/workspace/skills/home-presence/register-interrupt.js persistent "light.*" --state on --label "Light activated"
+
+# Skip validation (e.g. HA is down or entity will be added later)
+node /home/jherrild/.openclaw/workspace/skills/home-presence/register-interrupt.js persistent sensor.future_entity --skip-validation
 
 # List all registered interrupts
 node /home/jherrild/.openclaw/workspace/skills/home-presence/register-interrupt.js list
@@ -212,6 +215,12 @@ node /home/jherrild/.openclaw/workspace/skills/home-presence/register-interrupt.
 # Remove an interrupt by ID
 node /home/jherrild/.openclaw/workspace/skills/home-presence/register-interrupt.js remove int-abc123
 ```
+
+**Validation behavior:**
+- **Entity existence:** Checked via `GET /api/states` against live HA. If not found, returns 3–5 similar entity name suggestions.
+- **State plausibility:** Checked against known domain states (e.g. `binary_sensor`: `on`/`off`, `person`: `home`/`not_home`). Domains without a known state list (e.g. `sensor`) skip this check.
+- **Wildcards:** Patterns containing `*` skip entity existence checks but still validate state if provided.
+- **Bypass:** Pass `--skip-validation` to skip all checks.
 
 ### What It Does
 
