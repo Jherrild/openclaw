@@ -192,9 +192,9 @@ async function locate() {
  */
 async function announceToRoom(area, message) {
   const key = area.toLowerCase();
-  const speakers = AREA_SPEAKERS[key];
+  const speakers = layout.AREA_SPEAKERS[key];
   if (!speakers || speakers.length === 0) {
-    console.error(`ERROR: No speakers mapped for area "${area}". Known areas: ${Object.keys(AREA_SPEAKERS).join(', ')}`);
+    console.error(`ERROR: No speakers mapped for area "${area}". Known areas: ${Object.keys(layout.AREA_SPEAKERS).join(', ')}`);
     process.exit(1);
   }
 
@@ -233,6 +233,19 @@ async function followAndSpeak(message, { priority = false } = {}) {
   let targetAreas;
   if (priority) {
     targetAreas = ['home group'];
+  } else if (presence.houseEmpty) {
+    // Everyone is away and no sensor presence — skip announcement
+    const output = {
+      occupiedAreas: [],
+      targetAreas: [],
+      priority,
+      houseEmpty: true,
+      message,
+      announcements: [],
+      note: 'House is empty (all persons away, no sensor presence). Skipping TTS.',
+    };
+    console.log(JSON.stringify(output, null, 2));
+    return output;
   } else if (presence.occupied.length > 0) {
     targetAreas = presence.occupied;
   } else {
@@ -245,7 +258,7 @@ async function followAndSpeak(message, { priority = false } = {}) {
 
   for (const area of targetAreas) {
     const key = area.toLowerCase();
-    const speakers = AREA_SPEAKERS[key] || AREA_SPEAKERS[DEFAULT_AREA.toLowerCase()];
+    const speakers = layout.AREA_SPEAKERS[key] || layout.AREA_SPEAKERS[DEFAULT_AREA.toLowerCase()];
     for (const speaker of speakers) {
       if (seen.has(speaker)) continue;
       seen.add(speaker);
@@ -275,6 +288,98 @@ async function followAndSpeak(message, { priority = false } = {}) {
   };
   console.log(JSON.stringify(output, null, 2));
   return output;
+}
+
+// ── Layout Builder ─────────────────────────────────────────────────────────────
+
+/**
+ * Query HA Area and Device registries to dynamically build area→entity mappings.
+ * Writes layout.json for subsequent runs to use.
+ */
+async function updateLayout() {
+  // Fetch areas, devices, and entities from HA REST API
+  const [areas, devices, entities] = await Promise.all([
+    haFetch('/api/template', {
+      method: 'POST',
+      body: JSON.stringify({ template: '{{ areas() | list | tojson }}' }),
+    }).then(r => typeof r === 'string' ? JSON.parse(r) : r),
+    haFetch('/api/template', {
+      method: 'POST',
+      body: JSON.stringify({ template: '{{ states | map(attribute="entity_id") | list | tojson }}' }),
+    }).then(r => typeof r === 'string' ? JSON.parse(r) : r),
+    haFetch('/api/states'),
+  ]);
+
+  // Build entity lookup by entity_id
+  const entityMap = {};
+  for (const e of entities) entityMap[e.entity_id] = e;
+
+  // For each area, find speakers, occupancy sensors, motion sensors, and CO2 sensors
+  const speakers = {};
+  const occupancy = {};
+  const motion = {};
+  const co2 = {};
+
+  // Fetch area→entity mapping via template for each area
+  for (const areaId of areas) {
+    let areaEntities;
+    try {
+      const raw = await haFetch('/api/template', {
+        method: 'POST',
+        body: JSON.stringify({ template: `{{ area_entities('${areaId}') | list | tojson }}` }),
+      });
+      areaEntities = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    } catch { continue; }
+
+    // Get friendly area name from any entity in this area, or use the area ID
+    let areaName = areaId;
+    for (const eid of areaEntities) {
+      const ent = entityMap[eid];
+      if (ent && ent.attributes && ent.attributes.friendly_name) {
+        // HA area IDs are slug-like; use the ID itself as the key (lowercase)
+        break;
+      }
+    }
+    const key = areaName.toLowerCase().replace(/_/g, ' ');
+
+    for (const eid of areaEntities) {
+      // Speakers: media_player entities
+      if (eid.startsWith('media_player.')) {
+        if (!speakers[key]) speakers[key] = [];
+        if (!speakers[key].includes(eid)) speakers[key].push(eid);
+      }
+      // mmWave occupancy: binary_sensor with 'occupancy' in entity_id
+      if (eid.startsWith('binary_sensor.') && eid.includes('occupancy')) {
+        occupancy[key] = eid;
+      }
+      // Motion sensors: binary_sensor with 'motion' in entity_id
+      if (eid.startsWith('binary_sensor.') && eid.includes('motion')) {
+        motion[key] = eid;
+      }
+      // CO2 sensors: sensor with 'co2' in entity_id
+      if (eid.startsWith('sensor.') && eid.includes('co2')) {
+        co2[key] = eid;
+      }
+    }
+  }
+
+  // Preserve the home group speaker if not discovered
+  if (!speakers['home group'] && DEFAULT_AREA_SPEAKERS['home group']) {
+    speakers['home group'] = DEFAULT_AREA_SPEAKERS['home group'];
+  }
+
+  const layoutData = {
+    _updated: new Date().toISOString(),
+    _areas: areas,
+    speakers,
+    occupancy,
+    motion,
+    co2,
+  };
+
+  fs.writeFileSync(LAYOUT_PATH, JSON.stringify(layoutData, null, 2));
+  console.log(JSON.stringify({ status: 'ok', path: LAYOUT_PATH, ...layoutData }, null, 2));
+  return layoutData;
 }
 
 // ── CLI ────────────────────────────────────────────────────────────────────────
@@ -310,8 +415,12 @@ const [,, command, ...args] = process.argv;
         break;
       }
 
+      case 'update-layout':
+        await updateLayout();
+        break;
+
       default:
-        console.error('Commands: locate | announce <area> <message> | follow-and-speak [--priority] <message>');
+        console.error('Commands: locate | announce <area> <message> | follow-and-speak [--priority] <message> | update-layout');
         process.exit(1);
     }
   } catch (err) {

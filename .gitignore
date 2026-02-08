@@ -2,3 +2,4 @@
 .magnus_auth
 memory/*
 *token*
+skills/copilot-delegate/sessions/*

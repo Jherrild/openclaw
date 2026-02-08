@@ -15,7 +15,7 @@ The `home-presence` skill grants Magnus a physical presence in Jesten's home by 
 - **Voice Preference**: Always use `alnilam`.
 
 ## Proposed Tools (to be implemented by Copilot)
-- `locate_jesten`: Returns a list of areas currently marked as occupied.
+- `locate_presence`: Returns a list of areas currently marked as occupied, plus home/away status of tracked persons.
 - `announce_to_room`: Takes `text` and `area`, triggers TTS on speakers in that area.
 - `follow_and_speak`: Detects occupancy and speaks only in the rooms where Jesten is present.
 
