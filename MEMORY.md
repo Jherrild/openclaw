@@ -31,6 +31,12 @@
   - **Missed Items:** Assume all sent documents need filing. Missing one is a failure.
   - **Sub-agents:** ALWAYS delegate document analysis/OCR to a sub-agent ("Silent Document Trigger").
 
+- **Home Presence & Speech Routing:**
+  - **Presence Detection:** Use Everything Presence Lite (mmWave) and CO2 fallback (via `home-presence` skill).
+  - **Limited Coverage:** Presence detection is NOT house-wide.
+  - **High Priority/Important:** Use "Home Group" (broadcast to all) to ensure delivery.
+  - **Low/Medium Priority:** If no mmWave presence is detected, default to "Living Room".
+
 - **Solar Project:**
   - Goal: Net-positive cash flow using 15kW array + 30kWh battery.
   - Net Cost: ~$15,400 (after 30% credit).
