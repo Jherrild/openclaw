@@ -1,0 +1,50 @@
+# PRD: Copilot Delegate Skill
+
+> **Last updated:** 2026-02-07
+> **Status:** Initial implementation
+
+## Goal
+
+Give Magnus a way to delegate coding tasks to GitHub Copilot CLI (which runs a full-context AI coding agent). This ensures complex code work is handled by a purpose-built coding agent with file access, while Magnus focuses on orchestration, categorization, and user interaction.
+
+## Design Principles
+
+1. **No wrapper scripts.** The Copilot CLI is already well-designed — SKILL.md documents the calling conventions.
+2. **Minimal token cost to Magnus.** Magnus gets results via a small summary file (~100 tokens), not the full session transcript.
+3. **Full audit trail for the human.** Session transcripts are saved for review but never loaded into Magnus's context.
+4. **Workspace-anchored.** Always run from `~/.openclaw/workspace/` so Copilot picks up `copilot-instructions.md`.
+
+## Architecture
+
+```
+Magnus (OpenClaw agent)
+  │
+  ├─ Writes prompt with task + context
+  ├─ Calls: copilot -p "..." --model claude-opus-4.6 --allow-all --share <transcript>
+  ├─ Checks: $? for exit code
+  ├─ Reads: last-result.md (~100 tokens) for outcome summary
+  └─ Optionally: grep transcript for specific details
+```
+
+## Files
+
+| File | Purpose |
+|------|---------|
+| `SKILL.md` | Magnus's operating instructions |
+| `last-result.md` | Summary written by Copilot after each task (overwritten each run) |
+| `sessions/` | Full session transcripts (`--share` output) for human audit |
+| `prd/initial-design.md` | This document |
+
+## Decided NOT To Do
+
+| Idea | Reason |
+|------|--------|
+| Wrapper shell script | CLI already has clean flags; wrapper adds maintenance burden and failure modes |
+| Parse Copilot output programmatically | Output format isn't stable; summary file convention is simpler and reliable |
+| Automatic retry on failure | Too risky without human judgment; Magnus should report failure and let user decide |
+
+## Still TODO
+
+- [ ] Test end-to-end: Magnus delegates a simple task, reads result
+- [ ] Establish session cleanup cadence (prune transcripts older than 30 days?)
+- [ ] Consider adding MCP server configs if Copilot needs access to specific tools

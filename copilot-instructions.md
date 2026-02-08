@@ -6,7 +6,7 @@
 
 ## What This Workspace Is
 
-This is the shared workspace for **Magnus**, an OpenClaw AI agent. OpenClaw is a local agent framework that runs persistent agents communicating via Telegram, executing cron jobs, and maintaining memory across sessions. Magnus's workspace is at `~/.openclaw/workspace/`.
+This is the shared workspace for **Magnus**, an OpenClaw AI agent. OpenClaw is a local agent framework that runs persistent agents communicating via Telegram, executing cron jobs, and maintaining memory across sessions. Magnus's workspace is at `~/.openclaw/workspace/`. Feel free to include suggestions to Magnus in post work summaries about what you would consider changing or adding here to make it easier to work with.
 
 Key workspace files (not skills):
 - `AGENTS.md` — Agent behavior rules and conventions
@@ -49,6 +49,12 @@ Synchronizes Supernote `.note` files from Google Drive to the Obsidian vault. Cr
 - **Key data:** `sync-mapping.json` (file ID → vault path), `.agent-pending` (manifest/lockfile), `buffer/` (pre-downloaded files)
 - **Dependencies:** `google-tasks` (node_modules), `google-docs` (OAuth token), `obsidian-scribe` (file placement), `local-rag` (vault search)
 
+### copilot-delegate
+Delegates coding tasks to GitHub Copilot CLI (this agent). Magnus uses this to hand off code writing, debugging, and refactoring to a specialized coding agent.
+- **No scripts** — pure SKILL.md instructions for calling `copilot -p "..." --model claude-opus-4.6 --allow-all`
+- **Key data:** `last-result.md` (outcome summary), `sessions/` (full transcripts for audit)
+- **Dependencies:** Copilot CLI installed at `~/.npm-global/bin/copilot`
+
 ## Dependency Graph
 
 ```
@@ -59,6 +65,8 @@ google-docs (uses google-tasks credentials)
 supernote-sync (uses google-docs token + google-tasks node_modules)
     ↓
 obsidian-scribe (file placement) ← local-rag (vault search)
+
+copilot-delegate (standalone — calls copilot CLI directly)
 ```
 
 ## Key Conventions

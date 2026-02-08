@@ -133,22 +133,66 @@ Every skill should have at minimum:
 ```
 skills/my-skill/
 ├── SKILL.md          # Agent instructions (MANDATORY — this is what the agent reads)
-├── PRD.md            # Design doc, status tracking, change log
+├── prd/              # PRD subfolder (new PRDs go here)
+│   └── initial-design.md
 ├── <scripts>         # Implementation files (sh, js, py)
 └── <data files>      # Mapping files, config, logs
 ```
 
+### SKILL.md Format Requirements
+
+SKILL.md files MUST follow this structure:
+
+**1. YAML Frontmatter (required):**
+```yaml
+---
+name: my-skill
+description: One-line description of what the skill does.
+---
+```
+This is how the agent indexes and discovers skills. Always include `name` and `description`.
+
+**2. H1 title** matching the skill name.
+
+**3. Configuration section** (if the skill has scripts, auth, or external dependencies):
+```markdown
+## Configuration
+- **Script Path:** `/path/to/main/script`
+- **Authentication:** How auth works, where tokens live
+- **Key IDs/Constants:** List IDs, folder IDs, account emails, etc.
+```
+
+**4. Tools section** (if the skill exposes commands the agent calls):
+Each tool gets its own H3 with a name, description, parameters, and a bash usage example:
+```markdown
+## Tools
+
+### tool_name
+What this tool does.
+
+**Parameters:**
+- `param1`: Description
+- `param2`: (Optional) Description
+
+**Usage:**
+\`\`\`bash
+node /path/to/script.js <param1> <param2>
+\`\`\`
+```
+
+**5. Remaining sections** as needed: Triggers, Workflow, Error Handling, Files table, Manual Commands, Cron config.
+
 ### SKILL.md Checklist
 
 A good SKILL.md should include:
+- [ ] **YAML frontmatter** with `name` and `description`
 - [ ] **Overview** — what the skill does in 2-3 bullets
+- [ ] **Configuration** — paths, auth, constants
+- [ ] **Tools** — named tools with parameters and usage examples
 - [ ] **Triggers** — what system event or condition activates it
 - [ ] **Step-by-step workflow** — numbered steps the agent follows
-- [ ] **Categorization/decision rules** — if the agent makes choices, be explicit
 - [ ] **Error handling** — what to do when things fail
-- [ ] **Auth & token locations** — even if the agent doesn't use them directly
 - [ ] **Common failure modes** — troubleshooting table
-- [ ] **Cron config** — how to check, recreate, enable/disable
 - [ ] **Manual commands** — for debugging and manual triggers
 - [ ] **File inventory** — what every file in the skill directory does
 
