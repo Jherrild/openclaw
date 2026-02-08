@@ -122,11 +122,23 @@ node /home/jherrild/.openclaw/workspace/skills/home-presence/presence.js update-
 
 ## HA WebSocket Bridge (`ha-bridge.js`)
 
-A persistent WebSocket connection to Home Assistant that subscribes to `state_changed` events for all presence-related entities and writes them to a **rolling JSONL log** (`presence-log.jsonl`).
+A persistent WebSocket connection to Home Assistant that subscribes to **all** `state_changed` events and routes them to **multiple rolling JSONL logs** based on dynamic domain/pattern matching.
 
-### Architecture: Passive Logging
+### Architecture: Multi-Tiered Passive Logging
 
-The bridge operates in **passive log-only mode** by default. Instead of interrupting Magnus with `openclaw system event` on every state change, events are appended to `presence-log.jsonl` — a rolling append-only log capped at 5,000 lines. Magnus (or any tool) can read this log on demand without being woken for each event.
+The bridge operates in **passive log-only mode** by default. Instead of filtering to a hard-coded entity list, it classifies every state change event by entity domain and naming patterns, routing each to the appropriate tier-specific log file. All logs are capped at **5,000 lines** (trimmed to 4,000 on overflow).
+
+**Log Tiers (evaluated in order — first match wins):**
+
+| Tier | File | Matches |
+|------|------|---------|
+| `presence` | `presence-log.jsonl` | `person.*`, `binary_sensor.*occupancy`, `binary_sensor.*motion`, `binary_sensor.*presence` |
+| `lighting` | `lighting-log.jsonl` | `light.*` |
+| `climate` | `climate-log.jsonl` | `climate.*`, `sensor.*temperature`, `sensor.*humidity`, `sensor.*co2`, `switch.*heater`, `switch.*fan` |
+| `automation` | `automation-log.jsonl` | `automation.*`, `script.*` |
+| `raw` | `home-status-raw.jsonl` | Everything else (catch-all), excluding noisy entities (`sun.*`, `sensor.*uptime`, `sensor.*last_boot`) |
+
+New devices added to Home Assistant that match these patterns are logged **automatically** — no code changes needed.
 
 **High-priority wake support** is plumbed in via the `WAKE_ON_ENTITIES` set in `ha-bridge.js`. This set is currently **empty**. To re-enable agent-waking for specific entities, add their IDs to the set:
 
@@ -143,51 +155,53 @@ Only entities in `WAKE_ON_ENTITIES` will trigger `openclaw system event`; all ot
 
 - Connects to `ws://homeassistant:8123/api/websocket` (override with `HA_WS_URL` env var).
 - Authenticates using the LLAT from `config/mcporter.json` (override with `HA_TOKEN` env var).
-- Subscribes to `state_changed` events and filters to watched entities (person entities, mmWave occupancy, motion sensors).
-- Appends every state change to `presence-log.jsonl` as a single JSON object per line.
+- Subscribes to `state_changed` events and classifies each by domain/pattern into one of five log tiers.
+- Appends every state change to the appropriate JSONL log file as a single JSON object per line.
 - If an entity is in `WAKE_ON_ENTITIES`, also pushes a `home-presence: ...` system event to Magnus.
-- Auto-trims the log to 4,000 lines when it exceeds 5,000 lines.
+- Auto-trims each log to 4,000 lines when it exceeds 5,000 lines.
 - Reconnects automatically with exponential backoff (1s → 60s max) if the socket drops.
 - Sends periodic pings (30s) and terminates/reconnects on pong timeout (10s).
 - Singleton guard via `pgrep` (filters out vscode processes to avoid false positives).
 
-### Presence Log Format (`presence-log.jsonl`)
+### Log Entry Format (all JSONL files)
 
 Each line is a JSON object:
 
 ```json
-{"ts":"2026-02-08T21:00:00.000Z","entity_id":"binary_sensor.everything_presence_lite_4f1008_occupancy","area":"Office","old_state":"off","new_state":"on","summary":"home-presence: Office is now occupied"}
+{"ts":"2026-02-08T21:00:00.000Z","entity_id":"binary_sensor.everything_presence_lite_4f1008_occupancy","domain":"binary_sensor","area":"Office","old_state":"off","new_state":"on","summary":"home-presence: Office is now occupied"}
 ```
 
 | Field | Description |
 |-------|-------------|
 | `ts` | ISO 8601 timestamp |
 | `entity_id` | Home Assistant entity ID |
-| `area` | Human-readable area name (or `null`) |
+| `domain` | Entity domain (e.g., `light`, `climate`, `automation`) |
+| `area` | Human-readable area name, friendly_name fallback, or `null` |
 | `old_state` | Previous state value |
 | `new_state` | New state value |
 | `summary` | Human-readable event description |
 
-### Checking the Presence Log
+### Checking the Logs
 
 ```bash
-# View the last 20 events
+# View the last 20 presence events
 tail -20 /home/jherrild/.openclaw/workspace/skills/home-presence/presence-log.jsonl
 
-# Find all "occupied" events for the Office
-grep '"Office"' /home/jherrild/.openclaw/workspace/skills/home-presence/presence-log.jsonl | grep '"occupied"' | tail -10
+# View recent lighting changes
+tail -20 /home/jherrild/.openclaw/workspace/skills/home-presence/lighting-log.jsonl
 
-# Count events per area today
-grep "$(date -u +%Y-%m-%d)" /home/jherrild/.openclaw/workspace/skills/home-presence/presence-log.jsonl | \
-  python3 -c "import sys,json,collections; c=collections.Counter(json.loads(l).get('area','?') for l in sys.stdin); print(dict(c))"
+# View recent climate/HVAC events
+tail -20 /home/jherrild/.openclaw/workspace/skills/home-presence/climate-log.jsonl
 
-# Check log size
-wc -l /home/jherrild/.openclaw/workspace/skills/home-presence/presence-log.jsonl
+# View recent automation triggers
+tail -20 /home/jherrild/.openclaw/workspace/skills/home-presence/automation-log.jsonl
+
+# View catch-all raw events
+tail -20 /home/jherrild/.openclaw/workspace/skills/home-presence/home-status-raw.jsonl
+
+# Check log sizes
+wc -l /home/jherrild/.openclaw/workspace/skills/home-presence/*-log.jsonl /home/jherrild/.openclaw/workspace/skills/home-presence/home-status-raw.jsonl
 ```
-
-### Watched Entities
-
-All person entities (`person.jesten`, `person.april_jane`) and all occupancy/motion sensors listed in the Presence Sensors table above.
 
 ### Starting the Bridge (systemd — preferred)
 
@@ -201,7 +215,7 @@ systemctl --user start ha-bridge.service
 systemctl --user enable ha-bridge.service
 ```
 
-> **Logs:** Status and connection logs go to `ha-bridge.status.log` in the skill directory. Presence events go to `presence-log.jsonl`.
+> **Logs:** Status and connection logs go to `ha-bridge.status.log` in the skill directory. Presence events go to `presence-log.jsonl`; other domain events go to their respective tier logs.
 
 ### Checking Status
 

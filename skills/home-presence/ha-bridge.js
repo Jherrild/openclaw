@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 // ha-bridge.js — Persistent WebSocket bridge from Home Assistant to OpenClaw.
-// Subscribes to state_changed events for presence-related entities and writes
-// them to a rolling JSONL log. Agent-waking is reserved for high-priority
-// entities listed in WAKE_ON_ENTITIES (currently empty — add entities there
-// to re-enable direct agent interrupts in the future).
+// Subscribes to state_changed events and routes them to multiple rolling JSONL
+// logs based on dynamic domain/pattern filters. Agent-waking is reserved for
+// high-priority entities listed in WAKE_ON_ENTITIES (currently empty).
 
 const fs = require('fs');
 const path = require('path');
@@ -30,22 +29,81 @@ if (!TOKEN) {
   process.exit(1);
 }
 
-// Entities we care about — occupancy sensors, motion sensors, person entities
-const WATCHED_ENTITIES = new Set([
-  // Person entities
-  'person.jesten',
-  'person.april_jane',
-  // mmWave occupancy sensors
-  'binary_sensor.everything_presence_lite_5c0db4_occupancy', // Kitchen
-  'binary_sensor.everything_presence_lite_4f1008_occupancy', // Office
-  'binary_sensor.everything_presence_lite_5c0d08_occupancy', // Gym
-  'binary_sensor.everything_presence_lite_5c0da4_occupancy', // Bedroom
-  'binary_sensor.everything_presence_lite_ab20a4_occupancy', // Basement
-  // Motion sensors
-  'binary_sensor.front_door_motion',
+// ── High-Priority Wake Configuration ────────────────────────────────────────
+// Entities listed here will ALSO fire an `openclaw system event` to wake the
+// agent immediately. Leave empty to run in fully passive / log-only mode.
+// Example: ['person.jesten', 'binary_sensor.front_door_motion']
+const WAKE_ON_ENTITIES = new Set([
+  // (none — add entity IDs here to enable direct agent interrupts)
 ]);
 
-// Entity-to-area map for human-readable events
+// ── Dynamic Entity Filter / Router ──────────────────────────────────────────
+// Each tier defines regex patterns matched against entity_id. An event is
+// routed to the FIRST tier whose pattern matches. The final 'raw' tier is the
+// catch-all for everything not matched above (minus noisy exclusions).
+
+const NOISY_EXCLUSIONS = /^(sun\.|sensor\..*uptime|sensor\..*last_boot)/;
+
+const LOG_TIERS = [
+  {
+    name: 'presence',
+    file: 'presence-log.jsonl',
+    patterns: [
+      /^person\./,
+      /^binary_sensor\..*occupancy/,
+      /^binary_sensor\..*motion/,
+      /^binary_sensor\..*presence/,
+    ],
+  },
+  {
+    name: 'lighting',
+    file: 'lighting-log.jsonl',
+    patterns: [
+      /^light\./,
+    ],
+  },
+  {
+    name: 'climate',
+    file: 'climate-log.jsonl',
+    patterns: [
+      /^climate\./,
+      /^sensor\..*temperature/,
+      /^sensor\..*humidity/,
+      /^sensor\..*co2/,
+      /^switch\..*heater/,
+      /^switch\..*fan/,
+    ],
+  },
+  {
+    name: 'automation',
+    file: 'automation-log.jsonl',
+    patterns: [
+      /^automation\./,
+      /^script\./,
+    ],
+  },
+  {
+    name: 'raw',
+    file: 'home-status-raw.jsonl',
+    // Catch-all — no patterns means "everything else"
+    patterns: [],
+  },
+];
+
+// Pre-compile a lookup: returns the tier for a given entity_id
+function classifyEntity(entityId) {
+  for (const tier of LOG_TIERS) {
+    if (tier.patterns.length === 0) continue; // skip catch-all during matching
+    for (const re of tier.patterns) {
+      if (re.test(entityId)) return tier;
+    }
+  }
+  // Catch-all: 'raw' tier (last entry), but exclude noisy entities
+  if (NOISY_EXCLUSIONS.test(entityId)) return null;
+  return LOG_TIERS[LOG_TIERS.length - 1];
+}
+
+// Legacy entity-to-area map for human-readable presence events
 const ENTITY_AREA = {
   'binary_sensor.everything_presence_lite_5c0db4_occupancy': 'Kitchen',
   'binary_sensor.everything_presence_lite_4f1008_occupancy': 'Office',
@@ -57,20 +115,11 @@ const ENTITY_AREA = {
   'person.april_jane': null,
 };
 
-// ── High-Priority Wake Configuration ────────────────────────────────────────
-// Entities listed here will ALSO fire an `openclaw system event` to wake the
-// agent immediately. Leave empty to run in fully passive / log-only mode.
-// Example: ['person.jesten', 'binary_sensor.front_door_motion']
-const WAKE_ON_ENTITIES = new Set([
-  // (none — add entity IDs here to enable direct agent interrupts)
-]);
-
 // ── Rolling JSONL Log Configuration ─────────────────────────────────────────
 
-const PRESENCE_LOG_PATH = path.join(__dirname, 'presence-log.jsonl');
-const PRESENCE_LOG_MAX_LINES = 5000;
+const LOG_MAX_LINES = 5000;
 // After a trim we keep this many lines so we don't trim on every single write
-const PRESENCE_LOG_TRIM_TO  = 4000;
+const LOG_TRIM_TO  = 4000;
 
 // Reconnection parameters (exponential backoff)
 const RECONNECT_BASE_MS  = 1000;
@@ -89,6 +138,9 @@ let pingTimer = null;
 let pongTimer = null;
 let shuttingDown = false;
 
+// Per-file line counts, lazy-initialized on first write
+const _lineCounts = {};
+
 // ── Logging ────────────────────────────────────────────────────────────────────
 
 function log(level, ...args) {
@@ -96,43 +148,40 @@ function log(level, ...args) {
   console[level === 'error' ? 'error' : 'log'](`[${ts}] [ha-bridge] [${level}]`, ...args);
 }
 
-// ── Rolling JSONL log writer ────────────────────────────────────────────────
-
-let _lineCount = null; // lazy-initialized on first write
+// ── Rolling JSONL log writer (generic, per-file) ────────────────────────────
 
 function countLines(filePath) {
   try {
     const buf = fs.readFileSync(filePath, 'utf8');
     if (!buf) return 0;
-    // Count newlines; every JSONL entry ends with \n
     let n = 0;
     for (let i = 0; i < buf.length; i++) { if (buf[i] === '\n') n++; }
     return n;
   } catch { return 0; }
 }
 
-function trimLog() {
+function trimLog(filePath) {
   try {
-    const lines = fs.readFileSync(PRESENCE_LOG_PATH, 'utf8').split('\n').filter(Boolean);
-    if (lines.length <= PRESENCE_LOG_MAX_LINES) return;
-    const kept = lines.slice(lines.length - PRESENCE_LOG_TRIM_TO);
-    fs.writeFileSync(PRESENCE_LOG_PATH, kept.join('\n') + '\n');
-    _lineCount = kept.length;
-    log('info', `Trimmed presence log from ${lines.length} to ${kept.length} lines`);
+    const lines = fs.readFileSync(filePath, 'utf8').split('\n').filter(Boolean);
+    if (lines.length <= LOG_MAX_LINES) return;
+    const kept = lines.slice(lines.length - LOG_TRIM_TO);
+    fs.writeFileSync(filePath, kept.join('\n') + '\n');
+    _lineCounts[filePath] = kept.length;
+    log('info', `Trimmed ${path.basename(filePath)} from ${lines.length} to ${kept.length} lines`);
   } catch (err) {
-    log('error', `Failed to trim presence log: ${err.message}`);
+    log('error', `Failed to trim ${path.basename(filePath)}: ${err.message}`);
   }
 }
 
-function appendPresenceLog(entry) {
+function appendLog(filePath, entry) {
   const line = JSON.stringify(entry) + '\n';
   try {
-    fs.appendFileSync(PRESENCE_LOG_PATH, line);
-    if (_lineCount === null) _lineCount = countLines(PRESENCE_LOG_PATH);
-    else _lineCount++;
-    if (_lineCount > PRESENCE_LOG_MAX_LINES) trimLog();
+    fs.appendFileSync(filePath, line);
+    if (_lineCounts[filePath] === undefined) _lineCounts[filePath] = countLines(filePath);
+    else _lineCounts[filePath]++;
+    if (_lineCounts[filePath] > LOG_MAX_LINES) trimLog(filePath);
   } catch (err) {
-    log('error', `Failed to write presence log: ${err.message}`);
+    log('error', `Failed to write ${path.basename(filePath)}: ${err.message}`);
   }
 }
 
@@ -247,24 +296,29 @@ function connect() {
       case 'event': {
         const data = msg.event && msg.event.data;
         if (!data || !data.entity_id) break;
-        if (!WATCHED_ENTITIES.has(data.entity_id)) break;
 
         const oldState = data.old_state ? data.old_state.state : 'unknown';
         const newState = data.new_state ? data.new_state.state : 'unknown';
         if (oldState === newState) break; // no actual state change
 
+        const tier = classifyEntity(data.entity_id);
+        if (!tier) break; // excluded (noisy entity)
+
+        const logPath = path.join(__dirname, tier.file);
         const eventText = formatStateChange(data.entity_id, oldState, newState);
 
-        // Always write to rolling JSONL log
-        appendPresenceLog({
+        const entry = {
           ts: new Date().toISOString(),
           entity_id: data.entity_id,
-          area: ENTITY_AREA[data.entity_id] || null,
+          domain: data.entity_id.split('.')[0],
+          area: ENTITY_AREA[data.entity_id] || (data.new_state && data.new_state.attributes && data.new_state.attributes.friendly_name) || null,
           old_state: oldState,
           new_state: newState,
           summary: eventText,
-        });
-        log('info', `Logged: ${eventText}`);
+        };
+
+        appendLog(logPath, entry);
+        log('info', `[${tier.name}] ${eventText}`);
 
         // Only wake the agent for high-priority entities
         if (WAKE_ON_ENTITIES.has(data.entity_id)) {
@@ -334,8 +388,8 @@ if (checkAlreadyRunning()) {
 }
 
 log('info', 'Starting HA WebSocket bridge');
-log('info', `Watching ${WATCHED_ENTITIES.size} entities`);
-log('info', `Logging to ${PRESENCE_LOG_PATH} (max ${PRESENCE_LOG_MAX_LINES} lines)`);
+log('info', `Log tiers: ${LOG_TIERS.map(t => t.name).join(', ')}`);
+log('info', `All logs capped at ${LOG_MAX_LINES} lines, stored in ${__dirname}`);
 log('info', WAKE_ON_ENTITIES.size > 0
   ? `Wake-on entities: ${[...WAKE_ON_ENTITIES].join(', ')}`
   : 'Running in passive log-only mode (no agent interrupts)');

@@ -27,6 +27,25 @@ The HA bridge (`ha-bridge.js`) was refactored from a direct-interrupt model (eve
 
 **Rationale:** Constant agent-waking on every occupancy toggle was noisy and consumed agent tokens for events that rarely required action. The passive log lets Magnus (or heartbeat scripts) check presence history on demand, while the wake plumbing preserves the ability to escalate critical events (e.g., person arriving home, security motion) in the future.
 
+### Multi-Tiered Logging Architecture (added 2026-02-08)
+
+The bridge was further refactored from hard-coded entity ID filtering to **dynamic domain/pattern-based routing** across five rolling JSONL log files:
+
+| Tier | File | Matches |
+|------|------|---------|
+| `presence` | `presence-log.jsonl` | `person.*`, `binary_sensor.*occupancy`, `binary_sensor.*motion`, `binary_sensor.*presence` |
+| `lighting` | `lighting-log.jsonl` | `light.*` |
+| `climate` | `climate-log.jsonl` | `climate.*`, `sensor.*temperature`, `sensor.*humidity`, `sensor.*co2`, `switch.*heater`, `switch.*fan` |
+| `automation` | `automation-log.jsonl` | `automation.*`, `script.*` |
+| `raw` | `home-status-raw.jsonl` | Catch-all (excluding `sun.*`, `sensor.*uptime`, `sensor.*last_boot`) |
+
+**Key design choices:**
+- Regex patterns instead of hard-coded entity sets → new devices auto-categorized
+- First-match tier routing → no duplicate logging
+- Noisy entities excluded from catch-all to keep `home-status-raw.jsonl` useful
+- All logs share the same 5,000-line cap / 4,000-line trim behavior
+- Log entries include a `domain` field for easier downstream filtering
+
 ## Proposed Tools (to be implemented by Copilot)
 - `locate_presence`: Returns a list of areas currently marked as occupied, plus home/away status of tracked persons.
 - `announce_to_room`: Takes `text` and `area`, triggers TTS on speakers in that area.
@@ -41,6 +60,7 @@ The HA bridge (`ha-bridge.js`) was refactored from a direct-interrupt model (eve
 | Passive JSONL logging (replacing direct interrupts) | ✅ Done | 2026-02-08 |
 | `WAKE_ON_ENTITIES` high-priority plumbing | ✅ Done (empty) | Ready to enable per-entity |
 | Log rotation (5,000 line cap) | ✅ Done | Trims to 4,000 |
+| Multi-tiered dynamic filtering (5 log files) | ✅ Done | 2026-02-08 |
 
 ## Implementation Notes
 - Use the existing bearer token from the `ha-stdio-final` configuration for any direct API calls if the MCP tools are insufficient.
@@ -55,6 +75,9 @@ The HA bridge (`ha-bridge.js`) was refactored from a direct-interrupt model (eve
 | Line-count rotation over size-based | Predictable entry count; each JSON line is ~200-300 bytes so 5K lines ≈ 1-1.5 MB |
 | `WAKE_ON_ENTITIES` as in-code Set | Avoids an extra config file for a feature that's rarely changed; easy to edit |
 | Trim to 4,000 (not 5,000) on overflow | Avoids trimming on every single write after hitting the cap |
+| Regex patterns over hard-coded entity sets | Auto-discovers new devices; no code changes needed when HA devices are added |
+| First-match tier routing | Prevents duplicate logging; each event goes to exactly one file |
+| Noisy entity exclusion in catch-all | Keeps `home-status-raw.jsonl` useful; `sun.*` and uptime sensors change constantly |
 
 ## Decided NOT to Do
 
@@ -73,3 +96,4 @@ The HA bridge (`ha-bridge.js`) was refactored from a direct-interrupt model (eve
 2. ~~Create a script (`presence.js` or similar) to wrap these behaviors.~~ Done.
 3. ~~Define the `SKILL.md` for `home-presence`.~~ Done.
 4. ~~Refactor ha-bridge.js to passive JSONL logging with high-priority wake plumbing.~~ Done (2026-02-08).
+5. ~~Refactor ha-bridge.js to multi-tiered dynamic filtering with 5 rolling log files.~~ Done (2026-02-08).
