@@ -1,7 +1,7 @@
 # PRD: Copilot Delegate Skill
 
-> **Last updated:** 2026-02-07
-> **Status:** Initial implementation
+> **Last updated:** 2026-02-08
+> **Status:** Auto-commit feature added
 
 ## Goal
 
@@ -13,6 +13,7 @@ Give Magnus a way to delegate coding tasks to GitHub Copilot CLI (which runs a f
 2. **Minimal token cost to Magnus.** Magnus gets results via a small summary file (~100 tokens), not the full session transcript.
 3. **Full audit trail for the human.** Session transcripts are saved for review but never loaded into Magnus's context.
 4. **Workspace-anchored.** Always run from `~/.openclaw/workspace/` so Copilot picks up `copilot-instructions.md`.
+5. **Auto-commit on success.** Copilot commits its own changes after a successful task, using conventional commit messages. Commit instructions are embedded in the prompt directive — no wrapper script needed.
 
 ## Architecture
 
@@ -53,8 +54,9 @@ Magnus (OpenClaw agent)
 - [x] Concurrency guard (`pgrep` check before invocation)
 - [x] Session cleanup policy (keep newest 5, prune excess >30 days)
 - [x] Process detection pattern tested (`pgrep -f "node.*\.npm-global/bin/copilot"`)
+- [x] Post-task auto-commit: Copilot auto-commits changes after successful tasks via prompt directive
 
 ### Still TODO
 
-- [ ] Test end-to-end: Magnus delegates a simple task, reads result
+- [ ] Test end-to-end: Magnus delegates a simple task, reads result, verifies auto-commit
 - [ ] Consider adding MCP server configs if Copilot needs access to specific tools

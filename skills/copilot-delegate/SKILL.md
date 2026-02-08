@@ -53,7 +53,13 @@ Run a coding task in non-interactive mode. Copilot reads files, makes changes, a
 cd ~/.openclaw/workspace
 copilot -p "<your detailed prompt here>
 
-When finished, overwrite skills/copilot-delegate/last-result.md with a 2-3 sentence summary of what you did, what succeeded, and any issues. Replace the entire file contents." \
+When finished, overwrite skills/copilot-delegate/last-result.md with a 2-3 sentence summary of what you did, what succeeded, and any issues. Replace the entire file contents.
+
+If the task succeeded and you created or modified any files, auto-commit your changes:
+1. Run git status --porcelain to see all changed/new files.
+2. From those, git add ONLY the files you created or modified during this task — do NOT stage unrelated changes.
+3. Run git commit -m '<type>(<scope>): <description>' with a concise, descriptive message summarizing the work (e.g., 'feat(supernote-sync): add pagination to Drive API calls').
+4. Skip the commit if the task failed or no files were changed." \
   --model claude-opus-4.6 \
   --allow-all \
   --share "skills/copilot-delegate/sessions/$(date +%s).md"
@@ -75,6 +81,8 @@ Then check the result:
 ```bash
 echo "Exit code: $?"
 cat ~/.openclaw/workspace/skills/copilot-delegate/last-result.md
+# Verify the auto-commit happened
+git --no-pager log --oneline -1
 ```
 
 ### copilot_session_lookup
@@ -119,7 +127,15 @@ Copilot uses the working directory to discover project files, `copilot-instructi
 ```bash
 copilot -p "...
 
-IMPORTANT: Read ~/.openclaw/workspace/copilot-instructions.md and ~/.openclaw/workspace/OPENCLAW_SKILL_DEV_GUIDE.md for OpenClaw project conventions before starting." \
+IMPORTANT: Read ~/.openclaw/workspace/copilot-instructions.md and ~/.openclaw/workspace/OPENCLAW_SKILL_DEV_GUIDE.md for OpenClaw project conventions before starting.
+
+When finished, overwrite skills/copilot-delegate/last-result.md with a 2-3 sentence summary of what you did, what succeeded, and any issues. Replace the entire file contents.
+
+If the task succeeded and you created or modified any files, auto-commit your changes:
+1. Run git status --porcelain to see all changed/new files.
+2. From those, git add ONLY the files you created or modified during this task — do NOT stage unrelated changes.
+3. Run git commit -m '<type>(<scope>): <description>' with a concise, descriptive message.
+4. Skip the commit if the task failed or no files were changed." \
   --model claude-opus-4.6 \
   --allow-all \
   --add-dir ~/.openclaw/workspace \
@@ -145,7 +161,13 @@ The Drive API files.list call should loop using nextPageToken until all pages ar
 Read the current implementation first, then fix it.
 Do not modify any other files.
 
-When finished, write a 2-3 sentence summary of what you did, what succeeded, and any issues to skills/copilot-delegate/last-result.md
+When finished, overwrite skills/copilot-delegate/last-result.md with a 2-3 sentence summary of what you did, what succeeded, and any issues. Replace the entire file contents.
+
+If the task succeeded and you created or modified any files, auto-commit your changes:
+1. Run git status --porcelain to see all changed/new files.
+2. From those, git add ONLY the files you created or modified during this task — do NOT stage unrelated changes.
+3. Run git commit -m 'fix(supernote-sync): add pagination to Drive API files.list' with a concise, descriptive message.
+4. Skip the commit if the task failed or no files were changed.
 ```
 
 **Bad prompt example:**
@@ -228,6 +250,44 @@ grep -E "^(Created|Modified|Deleted|Edited)" skills/copilot-delegate/sessions/<t
 
 3. If the task fully failed, **report to Jesten** with the error context. Don't retry blindly — coding failures often need human judgment.
 
+## Post-Task Auto-Commit
+
+Copilot automatically commits its changes after a successful task. This is built into the **summary directive** — every prompt template includes auto-commit instructions that Copilot follows at the end of its session.
+
+### How It Works
+
+1. **Copilot finishes the task** and writes `last-result.md`.
+2. **Copilot checks `git status --porcelain`** to identify all changed/new files.
+3. **Copilot stages only the files it touched** — it does NOT blindly `git add .` or stage unrelated changes.
+4. **Copilot commits** with a conventional-commit-style message: `<type>(<scope>): <description>`.
+5. **If the task failed or no files changed**, Copilot skips the commit entirely.
+
+### Commit Message Convention
+
+Messages follow [Conventional Commits](https://www.conventionalcommits.org/):
+- `feat(<skill>): add new capability`
+- `fix(<skill>): resolve bug in X`
+- `refactor(<skill>): restructure Y`
+- `docs(<skill>): update SKILL.md`
+- `chore(<skill>): cleanup or maintenance`
+
+### What Magnus Should Verify
+
+After the delegation completes, confirm the commit happened:
+```bash
+# Check last commit
+git --no-pager log --oneline -1
+
+# If no commit was made but changes exist, something went wrong
+git status --porcelain
+```
+
+If Copilot failed to commit (e.g., merge conflict, git lock), Magnus can manually commit:
+```bash
+git add <files-copilot-changed>
+git commit -m "<type>(<scope>): <description>"
+```
+
 ## Important Rules
 
 1. **One at a time — enforce with process check.** Never run multiple `copilot` instances simultaneously. **Before every invocation**, check for an active process and wait if one is running:
@@ -254,6 +314,13 @@ grep -E "^(Created|Modified|Deleted|Edited)" skills/copilot-delegate/sessions/<t
    # Does the script still parse?
    bash -n <modified-script.sh>
    node --check <modified-script.js>
+   ```
+
+6. **Verify the auto-commit.** Check that Copilot committed its changes:
+   ```bash
+   git --no-pager log --oneline -1
+   # If expected commit is missing, check for unstaged changes
+   git status --porcelain
    ```
 
 ## Session Cleanup
