@@ -55,6 +55,12 @@ Delegates coding tasks to GitHub Copilot CLI (this agent). Magnus uses this to h
 - **Key data:** `last-result.md` (outcome summary), `sessions/` (full transcripts for audit)
 - **Dependencies:** Copilot CLI installed at `~/.npm-global/bin/copilot`
 
+### home-presence
+Gives Magnus a physical presence in the home — detects occupied rooms via Home Assistant sensors and speaks through local smart speakers using Google AI TTS.
+- **Scripts:** `presence.js` (locate, announce, follow-and-speak, update-layout)
+- **Key data:** Hardcoded area→speaker mappings with optional `layout.json` auto-discovery
+- **Dependencies:** Home Assistant via `ha-stdio-final` MCP (bearer token from `config/mcporter.json`)
+
 ## Dependency Graph
 
 ```
@@ -67,6 +73,8 @@ supernote-sync (uses google-docs token + google-tasks node_modules)
 obsidian-scribe (file placement) ← local-rag (vault search)
 
 copilot-delegate (standalone — calls copilot CLI directly)
+
+home-presence (standalone — calls Home Assistant API directly)
 ```
 
 ## Key Conventions
@@ -77,6 +85,7 @@ copilot-delegate (standalone — calls copilot CLI directly)
 4. **Use existing tools.** Check `obsidian-scribe` and `local-rag` before writing raw bash for vault operations. Prefer using local, existing tools- either MCP's via `MCPORTER`, or `CLI` tools, over direct API calls, or writing custom ones, for better error handling and consistency.
 5. **Back up state files.** Any accumulating JSON should have automatic `.bak` before mutation.
 6. **Test with `bash -n`** before committing shell scripts.
+7. **Magnus never codes directly.** All code writing, debugging, and refactoring must be delegated to Copilot via `copilot-delegate`. Magnus's tokens are expensive; Copilot's are free.
 
 ## PRD-Driven Design
 

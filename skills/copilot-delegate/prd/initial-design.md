@@ -43,8 +43,18 @@ Magnus (OpenClaw agent)
 | Parse Copilot output programmatically | Output format isn't stable; summary file convention is simpler and reliable |
 | Automatic retry on failure | Too risky without human judgment; Magnus should report failure and let user decide |
 
-## Still TODO
+## Implementation Status
+
+### Done
+- [x] SKILL.md with full workflow, tools, and rules
+- [x] Session marker convention (`.copilot-session` per skill)
+- [x] Summary file convention (`last-result.md` overwritten each run)
+- [x] Session transcript archival (`--share` to `sessions/`)
+- [x] Concurrency guard (`pgrep` check before invocation)
+- [x] Session cleanup policy (keep newest 5, prune excess >30 days)
+- [x] Process detection pattern tested (`pgrep -f "node.*\.npm-global/bin/copilot"`)
+
+### Still TODO
 
 - [ ] Test end-to-end: Magnus delegates a simple task, reads result
-- [ ] Establish session cleanup cadence (prune transcripts older than 30 days?)
 - [ ] Consider adding MCP server configs if Copilot needs access to specific tools

@@ -87,8 +87,6 @@ Find the saved Copilot session for a specific skill.
 cat skills/<SKILL_NAME>/.copilot-session 2>/dev/null
 # If empty or missing, no saved session exists
 ```
-# If empty or missing, no saved session exists
-```
 
 ### copilot_models
 
@@ -239,16 +237,16 @@ grep -E "^(Created|Modified|Deleted|Edited)" skills/copilot-delegate/sessions/<t
 
 ## Session Cleanup
 
-Transcripts accumulate in `sessions/`. Prune old ones only when there are more than 5 session files:
+Transcripts accumulate in `sessions/`. Prune old ones, keeping at least the 5 most recent:
 ```bash
 SESSION_DIR="$HOME/.openclaw/workspace/skills/copilot-delegate/sessions"
-SESSION_COUNT=$(find "$SESSION_DIR" -name "*.md" | wc -l)
-if [ "$SESSION_COUNT" -gt 5 ]; then
-  find "$SESSION_DIR" -name "*.md" -mtime +30 -delete
-fi
+# Keep the 5 newest, delete the rest if older than 30 days
+ls -t "$SESSION_DIR"/*.md 2>/dev/null | tail -n +6 | while read -r f; do
+  find "$f" -mtime +30 -delete 2>/dev/null
+done
 ```
 
-This ensures you always keep at least the 5 most recent sessions, and only prune beyond that if they're older than 30 days.
+This ensures the 5 most recent sessions are always preserved regardless of age, and older excess sessions are pruned after 30 days.
 
 ## Files
 

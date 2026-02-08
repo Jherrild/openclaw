@@ -32,7 +32,9 @@ OpenClaw is a local AI agent framework. It runs persistent agents (like "Magnus"
 │       ├── obsidian-scribe/
 │       ├── local-rag/
 │       ├── google-tasks/
-│       └── google-docs/
+│       ├── google-docs/
+│       ├── copilot-delegate/
+│       └── home-presence/
 ├── workspace-main/     # Magnus-specific workspace overlay
 ├── cron/jobs.json      # All cron job definitions
 ├── logs/               # OpenClaw gateway logs
@@ -119,12 +121,20 @@ Before writing raw bash commands for the agent, check what tools already exist:
 | `obsidian-scribe` | Create, move, append, archive vault notes | `scribe_save`, `scribe_move`, `scribe_append`, `scribe_archive` |
 | `local-rag` | Semantic + keyword search across vault | `node rag.js search "<query>" <directory>` |
 | `google-tasks` | Google Tasks API | `node tasks.js list <id>`, `node tasks.js add ...` |
+| `copilot-delegate` | Delegate coding tasks to Copilot CLI | `copilot -p "..." --model claude-opus-4.6 --allow-all` |
+| `home-presence` | Room occupancy detection + TTS speech routing | `node presence.js locate`, `node presence.js follow-and-speak "..."` |
 
 **Lesson:** Use the agent's existing tools instead of raw commands. Don't tell the agent to `find ~/vault -name "*.md"` when `local-rag` search exists. Don't tell it to `mv file dest` when `scribe_move` handles directory creation and vault conventions.
 
 ### 9. `.note` Files Are Binary
 
 Supernote `.note` files are a proprietary binary format. They cannot be `cat`'d, `grep`'d, or parsed as text. Categorization must rely on **filename heuristics** and **vault search for existing files with similar names**.
+
+### 10. Magnus Should Never Code — Delegate to Copilot
+
+Magnus's tokens are expensive. GitHub Copilot CLI tokens are free (Jesten's employee benefit). Any task involving writing, debugging, or refactoring code should be delegated to Copilot via the `copilot-delegate` skill.
+
+**Lesson:** When building skills, structure the agent's SKILL.md so that coding tasks are clearly separated from orchestration. If a skill needs code changes, Magnus should invoke `copilot -p "..."` rather than writing code in his own session. See `skills/copilot-delegate/SKILL.md` for the full protocol.
 
 ## Skill File Structure
 
@@ -227,14 +237,20 @@ A good PRD should track:
 ## Debugging Agent Sessions
 
 Session files are at `~/.openclaw/agents/<agent>/sessions/<uuid>.jsonl`. Each line is a JSON object with a `type` field:
-- `type: "session"` — session metadata
+- `type: "session"` — session metadata (id, cwd, timestamp)
 - `type: "message"` — conversation turn (has nested `message.role` and `message.content`)
 - `type: "thinking_level_change"` — model config change
+
+**Tool: `parse_session.py`**
+
+A custom parser lives at `~/.openclaw/parse_session.py` for extracting readable conversation from these JSONL files.
 
 Parse with:
 ```bash
 python3 ~/.openclaw/parse_session.py <session-file.jsonl>
 ```
+
+This script extracts `USER:`, `ASSISTANT:`, `TOOL_CALL:`, and `TOOL_RESULT:` lines from OpenClaw's JSONL session format (which nests messages under `{"type": "message", "message": {"role": ..., "content": ...}}`). Use it to debug what Magnus did in a session — for example, to understand why a skill invocation failed or what context the agent had.
 
 To find the most recent session:
 ```bash
