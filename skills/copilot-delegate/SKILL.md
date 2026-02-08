@@ -30,16 +30,31 @@ The only exception is trivial one-line config edits (changing a value in JSON, a
 ## Configuration
 
 - **CLI Path:** `~/.npm-global/bin/copilot` (also in `$PATH` as `copilot`)
+- **Lock Wrapper:** `~/.openclaw/workspace/skills/copilot-delegate/copilot-lock.sh`
 - **Working Directory:** `cd` to the project you're working on. For workspace/skill tasks, that's `~/.openclaw/workspace`. For external repos, `cd` to that repo.
 - **Default Model:** `claude-opus-4.6`
 - **Session Transcripts:** `~/.openclaw/workspace/skills/copilot-delegate/sessions/`
 - **Result Summary:** `~/.openclaw/workspace/skills/copilot-delegate/last-result.md`
+- **Lock File:** `~/.openclaw/workspace/skills/copilot-delegate/.copilot.lock` (auto-managed by wrapper)
+
+### Concurrency Safety
+
+**Always use `copilot-lock.sh` instead of calling `copilot` directly.** The wrapper:
+- Acquires a mutex lock before running the CLI (atomic via `mkdir`)
+- Waits with exponential backoff if another instance is running (up to 10 min)
+- Detects and clears stale locks (dead PID or older than 5 min)
+- Guarantees lock release on exit, error, or signal via `trap`
+
+Environment variables for tuning (optional):
+- `COPILOT_LOCK_TIMEOUT` — max seconds to wait for lock (default: 600)
+- `COPILOT_LOCK_STALE` — seconds before a lock is considered stale (default: 300)
+- `COPILOT_SESSION_ID` — session identifier written into the lock file
 
 ## Tools
 
 ### copilot_delegate
 
-Run a coding task in non-interactive mode. Copilot reads files, makes changes, and writes a summary when done. Can also resume a previous session.
+Run a coding task in non-interactive mode. Copilot reads files, makes changes, and writes a summary when done. Can also resume a previous session. **Always use `copilot-lock.sh` wrapper** — never call `copilot` directly.
 
 **Parameters:**
 - `-p <prompt>`: (Required for new tasks) Detailed task description. Must end with the summary directive.
@@ -51,7 +66,8 @@ Run a coding task in non-interactive mode. Copilot reads files, makes changes, a
 **New task:**
 ```bash
 cd ~/.openclaw/workspace
-copilot -p "<your detailed prompt here>
+LOCK_WRAPPER="skills/copilot-delegate/copilot-lock.sh"
+bash "$LOCK_WRAPPER" -p "<your detailed prompt here>
 
 When finished, overwrite skills/copilot-delegate/last-result.md with a 2-3 sentence summary of what you did, what succeeded, and any issues. Replace the entire file contents.
 
@@ -71,8 +87,9 @@ ls -t ~/.copilot/session-state/ | head -1 > skills/<SKILL_NAME>/.copilot-session
 **Resume a skill's session:**
 ```bash
 cd ~/.openclaw/workspace
+LOCK_WRAPPER="skills/copilot-delegate/copilot-lock.sh"
 SESSION_ID=$(cat skills/<SKILL_NAME>/.copilot-session)
-copilot --resume "$SESSION_ID" --model claude-opus-4.6 --allow-all
+bash "$LOCK_WRAPPER" --resume "$SESSION_ID" --model claude-opus-4.6 --allow-all
 ```
 
 Replace `<SKILL_NAME>` with the skill you're working on (e.g., `supernote-sync`).
@@ -125,9 +142,8 @@ Copilot uses the working directory to discover project files, `copilot-instructi
 **If the task relates to OpenClaw** (integrates with OpenClaw, uses its tools, or should follow its conventions), add the workspace as an extra directory and tell Copilot to read the instructions:
 
 ```bash
-copilot -p "...
-
-IMPORTANT: Read ~/.openclaw/workspace/copilot-instructions.md and ~/.openclaw/workspace/OPENCLAW_SKILL_DEV_GUIDE.md for OpenClaw project conventions before starting.
+LOCK_WRAPPER="$HOME/.openclaw/workspace/skills/copilot-delegate/copilot-lock.sh"
+bash "$LOCK_WRAPPER" -p "... and ~/.openclaw/workspace/OPENCLAW_SKILL_DEV_GUIDE.md for OpenClaw project conventions before starting.
 
 When finished, overwrite skills/copilot-delegate/last-result.md with a 2-3 sentence summary of what you did, what succeeded, and any issues. Replace the entire file contents.
 
@@ -197,7 +213,7 @@ copilot --help 2>&1 | grep -A10 '\-\-model'
 
 **Override model:**
 ```bash
-copilot -p "..." --model claude-sonnet-4.5 --allow-all --share "..."
+bash "$LOCK_WRAPPER" -p "..." --model claude-sonnet-4.5 --allow-all --share "..."
 ```
 
 ### 4. Handle Additional Paths
@@ -205,7 +221,7 @@ copilot -p "..." --model claude-sonnet-4.5 --allow-all --share "..."
 If the task involves files outside the working directory, add explicit directory access:
 
 ```bash
-copilot -p "..." \
+bash "$LOCK_WRAPPER" -p "..." \
   --model claude-opus-4.6 \
   --allow-all \
   --add-dir /path/to/other/directory \
@@ -245,7 +261,7 @@ grep -E "^(Created|Modified|Deleted|Edited)" skills/copilot-delegate/sessions/<t
 
 2. **Resume the session** if it was interrupted:
    ```bash
-   copilot --continue --allow-all
+   bash "$LOCK_WRAPPER" --continue --allow-all
    ```
 
 3. If the task fully failed, **report to Jesten** with the error context. Don't retry blindly — coding failures often need human judgment.
@@ -290,16 +306,12 @@ git commit -m "<type>(<scope>): <description>"
 
 ## Important Rules
 
-1. **One at a time — enforce with process check.** Never run multiple `copilot` instances simultaneously. **Before every invocation**, check for an active process and wait if one is running:
+1. **One at a time — enforced by `copilot-lock.sh`.** Never call `copilot` directly. Always use the lock wrapper:
    ```bash
-   # MANDATORY: Always run this before invoking copilot
-   while pgrep -f "node.*\.npm-global/bin/copilot" > /dev/null 2>&1; do
-     echo "Copilot CLI is already running. Waiting 30s..."
-     sleep 30
-   done
+   LOCK_WRAPPER="$HOME/.openclaw/workspace/skills/copilot-delegate/copilot-lock.sh"
+   bash "$LOCK_WRAPPER" -p "..." --model claude-opus-4.6 --allow-all
    ```
-   Note: The copilot CLI runs as `node ~/.npm-global/bin/copilot`, so we match that specific path. This won't match VS Code's Copilot extensions.
-   This is especially important for **sub-agents** — the main session may have already launched a Copilot process. Sub-agents must always check and wait.
+   The wrapper automatically acquires a mutex lock, waits with exponential backoff if another instance is running, detects stale locks, and guarantees cleanup on exit/error/signal. No manual `pgrep` checks needed.
 
 2. **Always include the summary directive.** Without it, you have no cheap way to know what happened.
 
@@ -341,6 +353,8 @@ This ensures the 5 most recent sessions are always preserved regardless of age, 
 | File | Purpose |
 |------|---------|
 | `SKILL.md` | This file — your operating instructions |
+| `copilot-lock.sh` | Mutex wrapper — always use this instead of calling `copilot` directly |
+| `.copilot.lock` | Lock file (auto-managed by `copilot-lock.sh` — do not edit manually) |
 | `last-result.md` | Overwritten each run with Copilot's summary of what it did |
 | `sessions/` | Full session transcripts for human audit (don't read these) |
 | `prd/initial-design.md` | Design document and status tracking |
