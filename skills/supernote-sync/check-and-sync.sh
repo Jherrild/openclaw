@@ -15,7 +15,7 @@ if [ -f "$LOG_FILE" ] && [ "$(wc -l < "$LOG_FILE")" -gt 500 ]; then
 fi
 
 # Initialize mapping if missing
-[ -f "$MAPPING_FILE" ] || echo '{"files":[]}' > "$MAPPING_FILE"
+[ -f "$MAPPING_FILE" ] || echo '{}' > "$MAPPING_FILE"
 
 # Backup mapping before each run (recoverable if corrupted)
 cp "$MAPPING_FILE" "$MAPPING_FILE.bak" 2>/dev/null || true
@@ -43,12 +43,12 @@ while read -r file; do
   FILE_NAME=$(echo "$file" | jq -r '.name')
   REMOTE_TS=$(echo "$file" | jq -r '.modifiedTime')
   
-  # Check if known in mapping
-  LOCAL_ENTRY=$(jq -r --arg id "$FILE_ID" '.files[] | select(.fileId == $id)' "$MAPPING_FILE" 2>/dev/null || echo "")
+  # Check if known in mapping (flat key-value structure: fileId -> {localPath, modifiedTime})
+  LOCAL_ENTRY=$(jq -r --arg id "$FILE_ID" '.[$id] // empty' "$MAPPING_FILE" 2>/dev/null || echo "")
   
   if [ -n "$LOCAL_ENTRY" ]; then
     # PATH A: Known file - check for updates
-    LOCAL_TS=$(echo "$LOCAL_ENTRY" | jq -r '.lastModified')
+    LOCAL_TS=$(echo "$LOCAL_ENTRY" | jq -r '.modifiedTime')
     LOCAL_PATH=$(echo "$LOCAL_ENTRY" | jq -r '.localPath')
     
     # Convert to epoch for comparison
@@ -63,9 +63,9 @@ while read -r file; do
         # Copy to mapped location
         mkdir -p "$(dirname "$LOCAL_PATH")"
         cp "$BUFFER_DIR/$FILE_NAME" "$LOCAL_PATH"
-        # Update mapping timestamp
+        # Update mapping timestamp (flat key-value structure)
         jq --arg id "$FILE_ID" --arg ts "$REMOTE_TS" \
-          '(.files[] | select(.fileId == $id)).lastModified = $ts' \
+          '.[$id].modifiedTime = $ts' \
           "$MAPPING_FILE" > "$MAPPING_FILE.tmp" && mv "$MAPPING_FILE.tmp" "$MAPPING_FILE"
         log "Updated: $FILE_NAME -> $LOCAL_PATH"
         echo "${FILE_ID}|${FILE_NAME}|${REMOTE_TS}|${LOCAL_PATH}" >> "$SKILL_DIR/.updated-files-buffer"
