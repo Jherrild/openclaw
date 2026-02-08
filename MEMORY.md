@@ -4,6 +4,10 @@
 - **Authorization Requests:** Must be on a new line and **bold** to ensure visibility.
 - **Cron Jobs:** SUSPENDED (as of 2026-02-03) — Google API rate limited. Ask Jesten before re-enabling.
 
+- **Model Switching Protocol:**
+  - **Trigger:** If struggling with a complex task or reasoning loop for a few turns on a lower-tier model (e.g., Flash).
+  - **Action:** Offer to switch to a better model (currently **Gemini 3 Pro**) to resolve the issue more quickly.
+
 - **MCP Preference Rule:**
   - **General:** Always prefer official MCP tools over custom-built skills or raw API calls.
   - **Fallback Protocol:** If an MCP tool fails or is unreachable, **ASK** before falling back to whatever custom skill, processes, or legacy/custom tools you might use to accomplish the same thing (filesystem tools).
@@ -69,6 +73,22 @@
     - **Scripts:** Call exposed scripts directly (e.g., `turn_on_sunday_coffee`).
   - **Configuration:** Stored in `config/mcporter.json`. Auth is handled via a Long-Lived Token.
   - **Constraint:** Do NOT build custom HA tools or use `copilot` for HA control. Use the native MCP bridge via `exec`.
+
+- **Coffee Roasting Protocol:**
+  - **Trigger:** Jesten starts/finishes a coffee roast.
+  - **Ambient Logging:** When a roast starts, pull ambient temp (Office) and local weather.
+  - **PARA Filing:** Use `2-Areas/Coffee Roasting/[Bean Name]/Roast Logs.md`.
+  - **Attachments:** Move graphs/photos to a `Documents/` subfolder within the bean folder and embed in the log.
+  - **Sub-agents:** Always use a sub-agent to extract data (RoR, First Crack, weight loss) from roast graphs.
+
+- **Google Home → Magnus Voice Bridge (Active Project):**
+  - **Goal:** Enable "Hey Google, tell Magnus [message]" speech-to-text delivery.
+  - **Current Status:**
+    - **HA Side:** Custom `MagnusMessage` intent and `rest_command` are configured.
+    - **Network Hurdle:** Home Assistant (OS) is currently unable to reach the Magnus gateway (`nr200p-1:18789`) due to network isolation/WSL2 bridging issues. Pings to both Tailscale and Local IPs fail from HA.
+    - **Proposed Solution:** Switch to an **IFTTT + Nabu Casa Webhook** bridge to bypass local network isolation.
+    - **Key Configs:** HA Automation requires `message: "{{ trigger.slots.message }}"` and `rest_command` requires a Bearer token (stored in `secrets.yaml` as `magnus_bearer_token`).
+    - **Backdoor:** Verified emergency SSH access to HA via Port 22222 (requires USB `CONFIG/authorized_keys` method for permanent host-level access).
 
 ## Projects
 - **Interview Prep (Nvidia):**
