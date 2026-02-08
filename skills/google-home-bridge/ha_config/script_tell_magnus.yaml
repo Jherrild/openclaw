@@ -1,0 +1,26 @@
+# Home Assistant Script — Tell Magnus
+# Merge into /config/scripts.yaml (or add via the HA UI → Settings → Automations & Scenes → Scripts).
+#
+# This script is exposed to Google Assistant as a "scene" / activatable entity.
+# Google Home routines can activate it with a message field.
+#
+# Entity ID: script.tell_magnus
+
+tell_magnus:
+  alias: "Tell Magnus"
+  description: "Send a voice message to Magnus (OpenClaw) via the system-event API."
+  fields:
+    message:
+      description: "The message text to deliver to Magnus."
+      required: true
+      example: "I'm heading out, be back in an hour"
+      selector:
+        text:
+  variables:
+    message: "{{ message | default('(no message)') }}"
+  sequence:
+    - action: rest_command.post_magnus_message
+      data:
+        message: "{{ message }}"
+  mode: single
+  icon: mdi:message-text-outline

@@ -1,0 +1,44 @@
+# Home Assistant Automation — Magnus Voice Bridge
+# Copy to: /config/automations.yaml (append) or add via the HA UI.
+#
+# Triggers when the conversation trigger matches a voice command,
+# extracts the message slot, and forwards it to the tell_magnus script.
+#
+# IMPORTANT: Remove /config/custom_sentences/en/magnus.yaml if present.
+# Custom sentences register a MagnusMessage intent that conflicts with
+# this automation's inline command patterns. HA matches the custom
+# sentence first, finds no intent_script handler, and the automation
+# never fires (leaving trigger.slots unpopulated).
+#
+# If you prefer the custom-sentences approach instead, delete this
+# automation and add the following to configuration.yaml:
+#
+#   intent_script:
+#     MagnusMessage:
+#       action:
+#         - action: rest_command.post_magnus_message
+#           data:
+#             message: "{{ message }}"
+#       speech:
+#         text: "Message sent to Magnus."
+#
+# In intent_script, slot variables are available directly as {{ name }}
+# (not trigger.slots.name).
+
+- id: magnus_voice_bridge
+  alias: "Magnus Voice Bridge"
+  description: "Forward voice messages from Google Home to Magnus via OpenClaw"
+  triggers:
+    - trigger: conversation
+      command:
+        - "tell magnus {message}"
+        - "ask magnus to {message}"
+        - "send magnus {message}"
+        - "message magnus {message}"
+        - "tell magnus that {message}"
+        - "say to magnus {message}"
+  actions:
+    - action: script.tell_magnus
+      data:
+        message: "{{ trigger.slots.message }}"
+  mode: single

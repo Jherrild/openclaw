@@ -1,0 +1,20 @@
+# Home Assistant Custom Sentence file
+# Copy to: /config/custom_sentences/en/magnus.yaml
+#
+# Defines the MagnusMessage intent so Assist (and Google Home via Nabu Casa)
+# can match phrases like "tell Magnus I'm heading out".
+
+language: "en"
+intents:
+  MagnusMessage:
+    data:
+      - sentences:
+          - "tell magnus {message}"
+          - "ask magnus to {message}"
+          - "send magnus {message}"
+          - "message magnus {message}"
+          - "tell magnus that {message}"
+          - "say to magnus {message}"
+lists:
+  message:
+    wildcard: true
