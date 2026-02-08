@@ -30,7 +30,7 @@ The only exception is trivial one-line config edits (changing a value in JSON, a
 ## Configuration
 
 - **CLI Path:** `~/.npm-global/bin/copilot` (also in `$PATH` as `copilot`)
-- **Working Directory:** Always `cd ~/.openclaw/workspace` before invoking (picks up `copilot-instructions.md`)
+- **Working Directory:** `cd` to the project you're working on. For workspace/skill tasks, that's `~/.openclaw/workspace`. For external repos, `cd` to that repo.
 - **Default Model:** `claude-opus-4.6`
 - **Session Transcripts:** `~/.openclaw/workspace/skills/copilot-delegate/sessions/`
 - **Result Summary:** `~/.openclaw/workspace/skills/copilot-delegate/last-result.md`
@@ -100,13 +100,33 @@ copilot --help 2>&1 | grep -A10 '\-\-model'
 
 ## Step-by-Step Workflow
 
-### 1. Always Start from Workspace Root if you're working on something in your workspace
+### 1. Set the Working Directory
+
+`cd` to the root of whatever project Copilot will be working on:
 
 ```bash
+# For workspace/skill tasks:
 cd ~/.openclaw/workspace
+
+# For external repos:
+cd ~/repos/my-project
 ```
 
-This ensures Copilot picks up `copilot-instructions.md` which contains the dev guide, skill overview, and project conventions. **Never skip this.**
+Copilot uses the working directory to discover project files, `copilot-instructions.md`, and `.git` context. Start in the right place.
+
+**If the task relates to OpenClaw** (integrates with OpenClaw, uses its tools, or should follow its conventions), add the workspace as an extra directory and tell Copilot to read the instructions:
+
+```bash
+copilot -p "...
+
+IMPORTANT: Read ~/.openclaw/workspace/copilot-instructions.md and ~/.openclaw/workspace/OPENCLAW_SKILL_DEV_GUIDE.md for OpenClaw project conventions before starting." \
+  --model claude-opus-4.6 \
+  --allow-all \
+  --add-dir ~/.openclaw/workspace \
+  --share "$HOME/.openclaw/workspace/skills/copilot-delegate/sessions/$(date +%s).md"
+```
+
+Use your judgment: if the task has nothing to do with OpenClaw, skip the extra directory and prompt lines.
 
 ### 2. Craft a Good Prompt
 
@@ -158,19 +178,20 @@ copilot --help 2>&1 | grep -A10 '\-\-model'
 copilot -p "..." --model claude-sonnet-4.5 --allow-all --share "..."
 ```
 
-### 4. Handle Paths Outside Workspace
+### 4. Handle Additional Paths
 
-If the task involves files outside `~/.openclaw/workspace/` (e.g., the Obsidian vault), add explicit directory access:
+If the task involves files outside the working directory, add explicit directory access:
 
 ```bash
 copilot -p "..." \
   --model claude-opus-4.6 \
   --allow-all \
-  --add-dir /mnt/c/Users/Jherr/Documents/remote-personal \
-  --share "skills/copilot-delegate/sessions/$(date +%s).md"
+  --add-dir /path/to/other/directory \
+  --share "$HOME/.openclaw/workspace/skills/copilot-delegate/sessions/$(date +%s).md"
 ```
 
 Common extra paths:
+- **OpenClaw workspace** (when working in external repos on OpenClaw-related tasks): `--add-dir ~/.openclaw/workspace`
 - **Obsidian vault:** `--add-dir /mnt/c/Users/Jherr/Documents/remote-personal`
 - **Temp files:** `--add-dir /tmp`
 
