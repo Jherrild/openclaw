@@ -120,6 +120,64 @@ node /home/jherrild/.openclaw/workspace/skills/home-presence/presence.js update-
 
 **Output:** JSON with discovered areas, speakers, occupancy sensors, motion sensors, and CO₂ sensors. Also writes `layout.json` for subsequent runs.
 
+## HA WebSocket Bridge (`ha-bridge.js`)
+
+A persistent WebSocket connection to Home Assistant that subscribes to `state_changed` events for all presence-related entities and pushes them to Magnus via `openclaw system event`.
+
+### What It Does
+
+- Connects to `ws://homeassistant:8123/api/websocket` (override with `HA_WS_URL` env var).
+- Authenticates using the LLAT from `config/mcporter.json` (override with `HA_TOKEN` env var).
+- Subscribes to `state_changed` events and filters to watched entities (person entities, mmWave occupancy, motion sensors).
+- When a watched entity's state changes, pushes a `home-presence: ...` system event to Magnus.
+- Reconnects automatically with exponential backoff (1s → 60s max) if the socket drops.
+- Sends periodic pings (30s) and terminates/reconnects on pong timeout (10s).
+- Singleton guard via `pgrep` (filters out vscode processes to avoid false positives).
+
+### Watched Entities
+
+All person entities (`person.jesten`, `person.april_jane`) and all occupancy/motion sensors listed in the Presence Sensors table above.
+
+### Starting the Bridge
+
+```bash
+# Start in background (detached)
+nohup node /home/jherrild/.openclaw/workspace/skills/home-presence/ha-bridge.js >> /tmp/ha-bridge.log 2>&1 &
+
+# Or with env overrides
+HA_WS_URL=ws://192.168.1.50:8123/api/websocket HA_TOKEN=your_token node ha-bridge.js
+```
+
+### Checking Status
+
+```bash
+# Check if running (excludes vscode false positives)
+pgrep -f 'node.*ha-bridge\.js' | while read pid; do
+  cmdline=$(cat /proc/$pid/cmdline 2>/dev/null | tr '\0' ' ')
+  echo "$cmdline" | grep -qv vscode && echo "Running: PID $pid"
+done
+
+# View recent logs
+tail -50 /tmp/ha-bridge.log
+```
+
+### Stopping the Bridge
+
+```bash
+# Find the PID (filtering out vscode)
+pgrep -f 'node.*ha-bridge\.js' | while read pid; do
+  cmdline=$(cat /proc/$pid/cmdline 2>/dev/null | tr '\0' ' ')
+  echo "$cmdline" | grep -qv vscode && kill "$pid" && echo "Stopped PID $pid"
+done
+```
+
+### Event Format
+
+Events pushed to Magnus follow this format:
+- Person: `home-presence: Jesten is now away (was home)`
+- Occupancy: `home-presence: Office is now occupied`
+- Motion: `home-presence: Front Yard — motion detected`
+
 ## Technical Notes
 
 - The `ha-stdio-final` MCP provides `GetLiveContext` for reading sensor state but has **no generic `call_service` tool**, so TTS is triggered via the Home Assistant REST API (`POST /api/services/tts/speak`).
