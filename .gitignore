@@ -3,3 +3,5 @@
 memory/*
 *token*
 skills/copilot-delegate/sessions/*
+.agent-pending
+.copilot-session
