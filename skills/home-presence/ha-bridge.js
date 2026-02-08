@@ -8,6 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
 const WebSocket = require('ws');
+const InterruptManager = require('./interrupt-manager');
 
 // ── Configuration ──────────────────────────────────────────────────────────────
 
@@ -137,6 +138,9 @@ let reconnectTimer = null;
 let pingTimer = null;
 let pongTimer = null;
 let shuttingDown = false;
+
+// ── Intelligent Interrupt Dispatcher ────────────────────────────────────────
+const interruptManager = new InterruptManager();
 
 // Per-file line counts, lazy-initialized on first write
 const _lineCounts = {};
@@ -324,6 +328,9 @@ function connect() {
         if (WAKE_ON_ENTITIES.has(data.entity_id)) {
           pushToMagnus(eventText);
         }
+
+        // Evaluate against registered interrupt rules
+        interruptManager.evaluate(data.entity_id, oldState, newState);
         break;
       }
 
@@ -393,6 +400,8 @@ log('info', `All logs capped at ${LOG_MAX_LINES} lines, stored in ${__dirname}`)
 log('info', WAKE_ON_ENTITIES.size > 0
   ? `Wake-on entities: ${[...WAKE_ON_ENTITIES].join(', ')}`
   : 'Running in passive log-only mode (no agent interrupts)');
+const iStats = interruptManager.stats();
+log('info', `Interrupt dispatcher active: ${iStats.persistentRules} persistent, ${iStats.oneOffRules} one-off rule(s)`);
 
 connect();
 
@@ -401,6 +410,7 @@ function shutdown(signal) {
   log('info', `Received ${signal} — shutting down`);
   shuttingDown = true;
   clearTimers();
+  interruptManager.destroy();
   if (ws) {
     ws.close();
     ws = null;

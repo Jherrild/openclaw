@@ -61,6 +61,8 @@ The bridge was further refactored from hard-coded entity ID filtering to **dynam
 | `WAKE_ON_ENTITIES` high-priority plumbing | ✅ Done (empty) | Ready to enable per-entity |
 | Log rotation (5,000 line cap) | ✅ Done | Trims to 4,000 |
 | Multi-tiered dynamic filtering (5 log files) | ✅ Done | 2026-02-08 |
+| Intelligent Interrupt Dispatcher | ✅ Done | 2026-02-08 — batching, rate limiting, circuit breaker |
+| `register-interrupt.js` CLI | ✅ Done | 2026-02-08 — add/list/remove rules |
 
 ## Implementation Notes
 - Use the existing bearer token from the `ha-stdio-final` configuration for any direct API calls if the MCP tools are insufficient.
@@ -79,6 +81,25 @@ The bridge was further refactored from hard-coded entity ID filtering to **dynam
 | First-match tier routing | Prevents duplicate logging; each event goes to exactly one file |
 | Noisy entity exclusion in catch-all | Keeps `home-status-raw.jsonl` useful; `sun.*` and uptime sensors change constantly |
 
+### Intelligent Interrupt Dispatcher (added 2026-02-08)
+
+The bridge now supports an **Intelligent Interrupt Dispatcher** via `interrupt-manager.js`, allowing dynamic registration of conditional alerts without code changes:
+
+- **Persistent interrupts** (`persistent-interrupts.json`) — fire on every match, retained indefinitely.
+- **One-off interrupts** (`one-off-interrupts.json`) — fire once, then auto-removed from the JSON file.
+- **Matching** — entity ID (exact or wildcard `light.*`) + optional state filter.
+- **Batching** — triggers collected in a 5-second window, dispatched as a single `openclaw system event`.
+- **Rate limiting** — max 4 dispatches per rolling 60-second window.
+- **Circuit breaker** — suppresses firing and logs a warning when rate limit is exceeded; auto-recovers.
+- **CLI** — `register-interrupt.js` for adding, listing, and removing rules (creates `.bak` before mutations).
+- All activity logged to `ha-bridge.status.log`.
+
+**Key design choices:**
+- Separate module (`interrupt-manager.js`) keeps the dispatcher decoupled from WebSocket lifecycle
+- `fs.watchFile` with 2-second polling for live reload of interrupt files (no restart needed)
+- One-off rules removed immediately after queuing (before dispatch) to prevent duplicates
+- Circuit breaker is automatic — no manual reset needed
+
 ## Decided NOT to Do
 
 | Idea | Why Not |
@@ -86,10 +107,13 @@ The bridge was further refactored from hard-coded entity ID filtering to **dynam
 | External config file for wake entities | Overkill — the set is edited rarely and a code change is fine |
 | SQLite presence database | Added complexity; JSONL is sufficient and greppable |
 | Automatic agent-wake on all person entities | Too noisy in practice; left as opt-in via `WAKE_ON_ENTITIES` |
+| Filesystem `fs.watch` for interrupt files | Unreliable on WSL/NFS; `fs.watchFile` polling is more robust |
+| Configurable batch/rate parameters | Keep it simple; constants in `interrupt-manager.js` are easy to edit |
 
 ## Still TODO
 - [ ] Consider a heartbeat or cron job that periodically reads `presence-log.jsonl` and summarizes presence patterns for Magnus
 - [ ] Populate `WAKE_ON_ENTITIES` when specific use cases arise (e.g., security alerts)
+- [ ] Add pre-built interrupt templates (e.g., security, arrival/departure) via `register-interrupt.js`
 
 ## Tasks for Copilot
 1. ~~Scrutinize the `ha-stdio-final` MCP capabilities to see if `tts.speak` can be called via a generic "call service" tool (if one exists but was hidden) or if raw API calls are needed.~~ Done — raw REST API needed.
