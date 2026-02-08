@@ -69,3 +69,36 @@ obsidian-scribe (file placement) ← local-rag (vault search)
 4. **Use existing tools.** Check `obsidian-scribe` and `local-rag` before writing raw bash for vault operations. Prefer using local, existing tools- either MCP's via `MCPORTER`, or `CLI` tools, over direct API calls, or writing custom ones, for better error handling and consistency.
 5. **Back up state files.** Any accumulating JSON should have automatic `.bak` before mutation.
 6. **Test with `bash -n`** before committing shell scripts.
+
+## PRD-Driven Design
+
+PRDs (Product Requirements Documents) are **mandatory** for all skills and projects in this workspace. They are living documents that track requirements, status, design decisions, and change history.
+
+### Rules
+
+1. **Always use a PRD.** If you're directed to work on a skill and no PRD exists, **write one before making changes.** Even small features benefit from a lightweight PRD that captures intent and tracks progress.
+
+2. **PRDs go in `/prd/`.** New PRDs should be created inside a `prd/` subfolder within the relevant skill or project directory:
+   ```
+   skills/my-skill/
+   ├── prd/
+   │   ├── initial-design.md
+   │   └── v2-refactor.md
+   ├── SKILL.md
+   └── ...
+   ```
+   If you find an existing PRD outside of `prd/` (e.g., `PRD.md` at skill root), that's fine — use it where it is. But create new ones in `prd/`.
+
+3. **PRDs are living documents.** They are not write-once artifacts. Follow this lifecycle:
+   - **Before starting work:** Read the PRD. Understand what's been done, what's changed, what's still open.
+   - **During work:** Update the PRD as you make design decisions, discover issues, or change approach.
+   - **After finishing work:** Update the PRD with what was completed, any new bugs found, and remaining TODOs.
+
+### What a Good PRD Tracks
+
+- **Implementation status** — what's done, what's in progress, what's blocked
+- **Changed from original design** — what diverged and why
+- **Decided NOT to do** — ideas rejected with rationale (saves future you from re-exploring dead ends)
+- **Bug fixes applied** — numbered table with description, fix, and date
+- **Still TODO** — open items with priority
+- **Design decisions** — Q&A or rationale for non-obvious choices
