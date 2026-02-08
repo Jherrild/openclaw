@@ -122,17 +122,68 @@ node /home/jherrild/.openclaw/workspace/skills/home-presence/presence.js update-
 
 ## HA WebSocket Bridge (`ha-bridge.js`)
 
-A persistent WebSocket connection to Home Assistant that subscribes to `state_changed` events for all presence-related entities and pushes them to Magnus via `openclaw system event`.
+A persistent WebSocket connection to Home Assistant that subscribes to `state_changed` events for all presence-related entities and writes them to a **rolling JSONL log** (`presence-log.jsonl`).
+
+### Architecture: Passive Logging
+
+The bridge operates in **passive log-only mode** by default. Instead of interrupting Magnus with `openclaw system event` on every state change, events are appended to `presence-log.jsonl` — a rolling append-only log capped at 5,000 lines. Magnus (or any tool) can read this log on demand without being woken for each event.
+
+**High-priority wake support** is plumbed in via the `WAKE_ON_ENTITIES` set in `ha-bridge.js`. This set is currently **empty**. To re-enable agent-waking for specific entities, add their IDs to the set:
+
+```js
+const WAKE_ON_ENTITIES = new Set([
+  'person.jesten',                      // wake when Jesten arrives/leaves
+  'binary_sensor.front_door_motion',    // wake on front door motion
+]);
+```
+
+Only entities in `WAKE_ON_ENTITIES` will trigger `openclaw system event`; all others are logged silently.
 
 ### What It Does
 
 - Connects to `ws://homeassistant:8123/api/websocket` (override with `HA_WS_URL` env var).
 - Authenticates using the LLAT from `config/mcporter.json` (override with `HA_TOKEN` env var).
 - Subscribes to `state_changed` events and filters to watched entities (person entities, mmWave occupancy, motion sensors).
-- When a watched entity's state changes, pushes a `home-presence: ...` system event to Magnus.
+- Appends every state change to `presence-log.jsonl` as a single JSON object per line.
+- If an entity is in `WAKE_ON_ENTITIES`, also pushes a `home-presence: ...` system event to Magnus.
+- Auto-trims the log to 4,000 lines when it exceeds 5,000 lines.
 - Reconnects automatically with exponential backoff (1s → 60s max) if the socket drops.
 - Sends periodic pings (30s) and terminates/reconnects on pong timeout (10s).
 - Singleton guard via `pgrep` (filters out vscode processes to avoid false positives).
+
+### Presence Log Format (`presence-log.jsonl`)
+
+Each line is a JSON object:
+
+```json
+{"ts":"2026-02-08T21:00:00.000Z","entity_id":"binary_sensor.everything_presence_lite_4f1008_occupancy","area":"Office","old_state":"off","new_state":"on","summary":"home-presence: Office is now occupied"}
+```
+
+| Field | Description |
+|-------|-------------|
+| `ts` | ISO 8601 timestamp |
+| `entity_id` | Home Assistant entity ID |
+| `area` | Human-readable area name (or `null`) |
+| `old_state` | Previous state value |
+| `new_state` | New state value |
+| `summary` | Human-readable event description |
+
+### Checking the Presence Log
+
+```bash
+# View the last 20 events
+tail -20 /home/jherrild/.openclaw/workspace/skills/home-presence/presence-log.jsonl
+
+# Find all "occupied" events for the Office
+grep '"Office"' /home/jherrild/.openclaw/workspace/skills/home-presence/presence-log.jsonl | grep '"occupied"' | tail -10
+
+# Count events per area today
+grep "$(date -u +%Y-%m-%d)" /home/jherrild/.openclaw/workspace/skills/home-presence/presence-log.jsonl | \
+  python3 -c "import sys,json,collections; c=collections.Counter(json.loads(l).get('area','?') for l in sys.stdin); print(dict(c))"
+
+# Check log size
+wc -l /home/jherrild/.openclaw/workspace/skills/home-presence/presence-log.jsonl
+```
 
 ### Watched Entities
 
@@ -147,6 +198,8 @@ nohup node /home/jherrild/.openclaw/workspace/skills/home-presence/ha-bridge.js 
 # Or with env overrides
 HA_WS_URL=ws://192.168.1.50:8123/api/websocket HA_TOKEN=your_token node ha-bridge.js
 ```
+
+> **Note:** Presence events are written to `presence-log.jsonl` in the skill directory. Console/stderr output (connection status, errors) still goes to `/tmp/ha-bridge.log`.
 
 ### Checking Status
 
@@ -171,9 +224,9 @@ pgrep -f 'node.*ha-bridge\.js' | while read pid; do
 done
 ```
 
-### Event Format
+### Event Format (in presence-log.jsonl)
 
-Events pushed to Magnus follow this format:
+Events follow this format in the `summary` field:
 - Person: `home-presence: Jesten is now away (was home)`
 - Occupancy: `home-presence: Office is now occupied`
 - Motion: `home-presence: Front Yard — motion detected`

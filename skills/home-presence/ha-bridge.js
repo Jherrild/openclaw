@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // ha-bridge.js — Persistent WebSocket bridge from Home Assistant to OpenClaw.
-// Subscribes to state_changed events for presence-related entities and pushes
-// relevant changes to Magnus via `openclaw system event`.
+// Subscribes to state_changed events for presence-related entities and writes
+// them to a rolling JSONL log. Agent-waking is reserved for high-priority
+// entities listed in WAKE_ON_ENTITIES (currently empty — add entities there
+// to re-enable direct agent interrupts in the future).
 
 const fs = require('fs');
 const path = require('path');
@@ -55,6 +57,21 @@ const ENTITY_AREA = {
   'person.april_jane': null,
 };
 
+// ── High-Priority Wake Configuration ────────────────────────────────────────
+// Entities listed here will ALSO fire an `openclaw system event` to wake the
+// agent immediately. Leave empty to run in fully passive / log-only mode.
+// Example: ['person.jesten', 'binary_sensor.front_door_motion']
+const WAKE_ON_ENTITIES = new Set([
+  // (none — add entity IDs here to enable direct agent interrupts)
+]);
+
+// ── Rolling JSONL Log Configuration ─────────────────────────────────────────
+
+const PRESENCE_LOG_PATH = path.join(__dirname, 'presence-log.jsonl');
+const PRESENCE_LOG_MAX_LINES = 5000;
+// After a trim we keep this many lines so we don't trim on every single write
+const PRESENCE_LOG_TRIM_TO  = 4000;
+
 // Reconnection parameters (exponential backoff)
 const RECONNECT_BASE_MS  = 1000;
 const RECONNECT_MAX_MS   = 60000;
@@ -79,10 +96,50 @@ function log(level, ...args) {
   console[level === 'error' ? 'error' : 'log'](`[${ts}] [ha-bridge] [${level}]`, ...args);
 }
 
-// ── Push event to Magnus via openclaw system event ─────────────────────────────
+// ── Rolling JSONL log writer ────────────────────────────────────────────────
+
+let _lineCount = null; // lazy-initialized on first write
+
+function countLines(filePath) {
+  try {
+    const buf = fs.readFileSync(filePath, 'utf8');
+    if (!buf) return 0;
+    // Count newlines; every JSONL entry ends with \n
+    let n = 0;
+    for (let i = 0; i < buf.length; i++) { if (buf[i] === '\n') n++; }
+    return n;
+  } catch { return 0; }
+}
+
+function trimLog() {
+  try {
+    const lines = fs.readFileSync(PRESENCE_LOG_PATH, 'utf8').split('\n').filter(Boolean);
+    if (lines.length <= PRESENCE_LOG_MAX_LINES) return;
+    const kept = lines.slice(lines.length - PRESENCE_LOG_TRIM_TO);
+    fs.writeFileSync(PRESENCE_LOG_PATH, kept.join('\n') + '\n');
+    _lineCount = kept.length;
+    log('info', `Trimmed presence log from ${lines.length} to ${kept.length} lines`);
+  } catch (err) {
+    log('error', `Failed to trim presence log: ${err.message}`);
+  }
+}
+
+function appendPresenceLog(entry) {
+  const line = JSON.stringify(entry) + '\n';
+  try {
+    fs.appendFileSync(PRESENCE_LOG_PATH, line);
+    if (_lineCount === null) _lineCount = countLines(PRESENCE_LOG_PATH);
+    else _lineCount++;
+    if (_lineCount > PRESENCE_LOG_MAX_LINES) trimLog();
+  } catch (err) {
+    log('error', `Failed to write presence log: ${err.message}`);
+  }
+}
+
+// ── Push event to Magnus via openclaw system event (high-priority only) ─────
 
 function pushToMagnus(text) {
-  log('info', `Pushing event: ${text}`);
+  log('info', `[WAKE] Pushing high-priority event: ${text}`);
   execFile('openclaw', ['system', 'event', '--text', text, '--mode', 'now'], (err, stdout, stderr) => {
     if (err) {
       log('error', `openclaw system event failed: ${err.message}`);
@@ -197,7 +254,22 @@ function connect() {
         if (oldState === newState) break; // no actual state change
 
         const eventText = formatStateChange(data.entity_id, oldState, newState);
-        pushToMagnus(eventText);
+
+        // Always write to rolling JSONL log
+        appendPresenceLog({
+          ts: new Date().toISOString(),
+          entity_id: data.entity_id,
+          area: ENTITY_AREA[data.entity_id] || null,
+          old_state: oldState,
+          new_state: newState,
+          summary: eventText,
+        });
+        log('info', `Logged: ${eventText}`);
+
+        // Only wake the agent for high-priority entities
+        if (WAKE_ON_ENTITIES.has(data.entity_id)) {
+          pushToMagnus(eventText);
+        }
         break;
       }
 
@@ -260,6 +332,10 @@ if (checkAlreadyRunning()) {
 
 log('info', 'Starting HA WebSocket bridge');
 log('info', `Watching ${WATCHED_ENTITIES.size} entities`);
+log('info', `Logging to ${PRESENCE_LOG_PATH} (max ${PRESENCE_LOG_MAX_LINES} lines)`);
+log('info', WAKE_ON_ENTITIES.size > 0
+  ? `Wake-on entities: ${[...WAKE_ON_ENTITIES].join(', ')}`
+  : 'Running in passive log-only mode (no agent interrupts)');
 
 connect();
 
