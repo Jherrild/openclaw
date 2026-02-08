@@ -5,8 +5,8 @@
 // entities before saving. Wildcard patterns (e.g. 'light.*') skip validation.
 //
 // Usage:
-//   node register-interrupt.js persistent <entity_id> [--state <state>] [--label <label>] [--message <msg>] [--skip-validation]
-//   node register-interrupt.js one-off    <entity_id> [--state <state>] [--label <label>] [--message <msg>] [--skip-validation]
+//   node register-interrupt.js persistent <entity_id> [--state <state>] [--label <label>] [--message <msg>] [--instruction <text>] [--skip-validation]
+//   node register-interrupt.js one-off    <entity_id> [--state <state>] [--label <label>] [--message <msg>] [--instruction <text>] [--skip-validation]
 //   node register-interrupt.js list
 //   node register-interrupt.js remove <id>
 
@@ -196,23 +196,28 @@ function parseArgs(argv) {
 
 function usage() {
   console.log(`Usage:
-  node register-interrupt.js persistent <entity_id> [--state <state>] [--label <label>] [--message <msg>] [--skip-validation]
-  node register-interrupt.js one-off    <entity_id> [--state <state>] [--label <label>] [--message <msg>] [--skip-validation]
+  node register-interrupt.js persistent <entity_id> [--state <state>] [--label <label>] [--message <msg>] [--instruction <text>] [--skip-validation]
+  node register-interrupt.js one-off    <entity_id> [--state <state>] [--label <label>] [--message <msg>] [--instruction <text>] [--skip-validation]
   node register-interrupt.js list
   node register-interrupt.js remove <id>
 
 Options:
   --skip-validation   Skip live entity validation against Home Assistant
+  --instruction       Custom context/instructions appended to the system event when the interrupt fires.
+                      Use this to tell the agent HOW to react (e.g., "announce via TTS", "log but don't wake").
 
 Examples:
   # Alert when front door motion is detected
   node register-interrupt.js persistent binary_sensor.front_door_motion --state on --label "Front door motion"
 
-  # One-off alert when Jesten arrives home
-  node register-interrupt.js one-off person.jesten --state home --label "Jesten arrived"
+  # One-off alert when Jesten arrives home, with instructions for the agent
+  node register-interrupt.js one-off person.jesten --state home --label "Jesten arrived" --instruction "Greet Jesten warmly via follow-and-speak"
 
   # Wildcard: any light turning on (wildcard skips entity existence check)
   node register-interrupt.js persistent "light.*" --state on --label "Light activated"
+
+  # Persistent interrupt with custom instruction
+  node register-interrupt.js persistent binary_sensor.front_door_motion --state on --label "Front door" --instruction "Check if anyone is expected; if not, announce security alert"
 
   # Skip validation (e.g. when HA is temporarily unavailable)
   node register-interrupt.js persistent sensor.future_entity --skip-validation
@@ -230,6 +235,7 @@ Interrupt schema:
     "state": "on",            // optional — if omitted, triggers on ANY state change
     "label": "Front door motion",
     "message": "custom message text",  // optional — used in the system event
+    "instruction": "Tell the agent how to react",  // optional — appended to system event
     "created": "ISO timestamp"
   }
 
@@ -255,12 +261,17 @@ if (!command || command === 'help' || command === '--help') {
 if (command === 'list') {
   const persistent = readJson(PERSISTENT_FILE);
   const oneOff = readJson(ONEOFF_FILE);
+  const formatRule = r => {
+    let line = `  [${r.id}] ${r.entity_id}${r.state != null ? ` = ${r.state}` : ' (any)'} — ${r.label || '(no label)'}`;
+    if (r.instruction) line += `\n    instruction: ${r.instruction}`;
+    return line;
+  };
   console.log('=== Persistent Interrupts ===');
   if (persistent.length === 0) console.log('  (none)');
-  else persistent.forEach(r => console.log(`  [${r.id}] ${r.entity_id}${r.state != null ? ` = ${r.state}` : ' (any)'} — ${r.label || '(no label)'}`));
+  else persistent.forEach(r => console.log(formatRule(r)));
   console.log('\n=== One-Off Interrupts ===');
   if (oneOff.length === 0) console.log('  (none)');
-  else oneOff.forEach(r => console.log(`  [${r.id}] ${r.entity_id}${r.state != null ? ` = ${r.state}` : ' (any)'} — ${r.label || '(no label)'}`));
+  else oneOff.forEach(r => console.log(formatRule(r)));
   process.exit(0);
 }
 
@@ -302,6 +313,7 @@ if (command === 'persistent' || command === 'one-off') {
       state: args.state !== undefined ? args.state : null,
       label: args.label || entityId,
       message: args.message || null,
+      instruction: args.instruction || null,
       created: new Date().toISOString(),
     };
 

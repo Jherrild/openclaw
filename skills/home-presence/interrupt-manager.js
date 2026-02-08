@@ -108,6 +108,7 @@ class InterruptManager {
         old_state: oldState,
         new_state: newState,
         message: rule.message || `${rule.label || rule.id}: ${entityId} → ${newState}`,
+        instruction: rule.instruction || null,
       });
     }
   }
@@ -173,7 +174,11 @@ class InterruptManager {
   // ── Dispatch ──────────────────────────────────────────────────────────────
 
   _dispatch(batch) {
-    const summaries = batch.map(b => b.message);
+    const summaries = batch.map(b => {
+      let s = b.message;
+      if (b.instruction) s += ` [instruction: ${b.instruction}]`;
+      return s;
+    });
     const text = `home-presence interrupt: ${summaries.join(' | ')}`;
 
     this._statusLog('info', `Dispatching openclaw system event: ${text}`);

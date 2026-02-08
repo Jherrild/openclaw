@@ -63,6 +63,7 @@ The bridge was further refactored from hard-coded entity ID filtering to **dynam
 | Multi-tiered dynamic filtering (5 log files) | ✅ Done | 2026-02-08 |
 | Intelligent Interrupt Dispatcher | ✅ Done | 2026-02-08 — batching, rate limiting, circuit breaker |
 | `register-interrupt.js` CLI | ✅ Done | 2026-02-08 — add/list/remove rules |
+| Interrupt `instruction` field | ✅ Done | 2026-02-08 — optional custom context appended to system events |
 
 ## Implementation Notes
 - Use the existing bearer token from the `ha-stdio-final` configuration for any direct API calls if the MCP tools are insufficient.
@@ -88,6 +89,7 @@ The bridge now supports an **Intelligent Interrupt Dispatcher** via `interrupt-m
 - **Persistent interrupts** (`persistent-interrupts.json`) — fire on every match, retained indefinitely.
 - **One-off interrupts** (`one-off-interrupts.json`) — fire once, then auto-removed from the JSON file.
 - **Matching** — entity ID (exact or wildcard `light.*`) + optional state filter.
+- **Instructions** — optional `instruction` field appended to the system event text, telling the agent how to react when the interrupt fires.
 - **Batching** — triggers collected in a 5-second window, dispatched as a single `openclaw system event`.
 - **Rate limiting** — max 4 dispatches per rolling 60-second window.
 - **Circuit breaker** — suppresses firing and logs a warning when rate limit is exceeded; auto-recovers.

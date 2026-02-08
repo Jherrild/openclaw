@@ -171,6 +171,7 @@ The bridge includes an **Intelligent Interrupt Dispatcher** (`interrupt-manager.
   "state": "on",
   "label": "Front door motion",
   "message": "Motion detected at front door",
+  "instruction": "Check if anyone is expected; if not, announce security alert via follow-and-speak",
   "created": "2026-02-08T22:00:00.000Z"
 }
 ```
@@ -182,6 +183,7 @@ The bridge includes an **Intelligent Interrupt Dispatcher** (`interrupt-manager.
 | `state` | No | If set, only fires when `new_state` matches this value. If `null`, fires on any state change. |
 | `label` | No | Human-readable name for logging |
 | `message` | No | Custom text for the `openclaw system event`. If omitted, a default is generated. |
+| `instruction` | No | Custom instructions/context appended to the system event text when the interrupt fires. Use this to tell the agent HOW to react (e.g., "announce via TTS", "log and summarize"). |
 | `created` | No | ISO timestamp of rule creation |
 
 #### Batching, Rate Limiting, and Circuit Breaker
@@ -202,6 +204,9 @@ node /home/jherrild/.openclaw/workspace/skills/home-presence/register-interrupt.
 
 # Add a one-off interrupt (auto-removed after firing)
 node /home/jherrild/.openclaw/workspace/skills/home-presence/register-interrupt.js one-off person.jesten --state home --label "Jesten arrived"
+
+# Add an interrupt with custom instructions for the agent
+node /home/jherrild/.openclaw/workspace/skills/home-presence/register-interrupt.js persistent binary_sensor.front_door_motion --state on --label "Front door" --instruction "Check if anyone is expected; if not, announce security alert via follow-and-speak"
 
 # Wildcard: any light turning on (skips entity existence check, validates state)
 node /home/jherrild/.openclaw/workspace/skills/home-presence/register-interrupt.js persistent "light.*" --state on --label "Light activated"
