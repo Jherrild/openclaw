@@ -63,6 +63,12 @@ Use this skill for ALL Obsidian note creation and updates. Do not use generic `w
 
 ## Workflows
 
+### Auto-Indexing (local-rag Integration)
+
+After every file operation (`scribe_save`, `scribe_append`, `scribe_move`, `scribe_archive`), the **local-rag** skill is automatically triggered asynchronously to re-index the affected files. This means search results from `local-rag` stay up-to-date without any manual re-indexing step. You do not need to call local-rag yourself after writes — it happens in the background.
+
+> **See also:** [`skills/local-rag/SKILL.md`](../local-rag/SKILL.md) — the companion search tool for querying Obsidian vault content and workspace files.
+
 ### The "Organize" Workflow
 When asked to organize a note or file:
 1.  **Inspect Content (Mandatory):**
@@ -77,6 +83,10 @@ When asked to organize a note or file:
         *   Resource (Topic/Reference)? -> `3-Resources/Category/...`
 3.  **Propose** the new path to the user (including any new subfolders).
 4.  **Execute** using `scribe_move` upon approval.
+
+## Companion Tool: local-rag
+
+For **searching** Obsidian vault content, use the [`local-rag`](../local-rag/SKILL.md) skill. It provides semantic and keyword search across all indexed notes. Obsidian-scribe handles writes; local-rag handles reads/search.
 
 ## Tools
 

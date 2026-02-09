@@ -1,3 +1,3 @@
-# Result: Update local-rag SKILL.md with workspace search use cases
+# Result: Document local-rag auto-indexing hooks in obsidian-scribe
 
-Updated `skills/local-rag/SKILL.md` to document recursive indexing behavior (including symlink traversal), added a "Use Cases" section showing how to leverage local-rag for Obsidian vault search, full workspace search, and targeted skill documentation search, plus a suggested workflow for internal skill discovery. All changes are documentation-only; no code was modified.
+Updated `skills/obsidian-scribe/SKILL.md` to document that local-rag is automatically triggered asynchronously after file operations (scribe_save, scribe_append, scribe_move, scribe_archive), added a new "Auto-Indexing" subsection under Workflows and a "Companion Tool: local-rag" cross-reference section above Tools. No issues encountered; all changes are documentation-only.
