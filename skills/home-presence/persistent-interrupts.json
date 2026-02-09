@@ -10,13 +10,25 @@
     "created": "2026-02-09T01:30:14.114Z"
   },
   {
-    "id": "int-mleuhr3z-pzb3",
+    "id": "int-mley78rc-44v2",
     "entity_id": "magnus.voice_command",
     "state": null,
-    "label": "Voice Command",
-    "message": "Voice Command: {{new_state}}",
-    "instruction": "Analyze the command. If it's a request to file something, use obsidian-scribe. If it's a task, use google-tasks. If it's a general question, answer it. Reply back to the main session ONLY if you have a response for Jesten.",
+    "label": "🦁 Voice",
+    "message": "{{new_state}}",
+    "instruction": null,
     "channel": "default",
-    "created": "2026-02-09T07:23:02.399Z"
+    "type": "message",
+    "created": "2026-02-09T09:06:50.520Z"
+  },
+  {
+    "id": "int-office-joke",
+    "entity_id": "binary_sensor.everything_presence_lite_4f1008_occupancy",
+    "state": "on",
+    "label": "Office Arrival Joke",
+    "message": null,
+    "instruction": "Jesten's office presence has changed. Tell him a short, witty joke via Telegram. Check the presence log to ensure this is a fresh arrival (vacant -> occupied) before sending.",
+    "channel": "telegram",
+    "type": "subagent",
+    "created": "2026-02-09T17:18:35.920Z"
   }
 ]

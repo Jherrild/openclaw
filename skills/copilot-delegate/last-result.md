@@ -1,5 +1,5 @@
-# Result: Obsidian Scribe — Auto-update Supernote Sync Mapping
+# Result: Add Office Joke Persistent Interrupt
 
 **Status:** ✅ Complete
 
-Created `skills/obsidian-scribe/lib/sync-mapping.js` with helpers to load, query, and update `skills/supernote-sync/sync-mapping.json`. Updated `write.js` to accept an optional `--file-id` flag and auto-update the mapping when saving a note that matches a tracked Supernote file (by ID or filename). Updated `move.js` to auto-update the `localPath` in the mapping when a tracked note is moved. All mapping updates are best-effort — if the mapping file is missing or corrupt, the primary file operation still succeeds with a warning.
+Added a new persistent interrupt (`int-office-joke`) to `skills/home-presence/persistent-interrupts.json` that triggers when the office mmWave sensor (`binary_sensor.everything_presence_lite_4f1008_occupancy`) changes to `on`. The interrupt is type `subagent` and instructs the agent to send Jesten a short, witty joke via Telegram after verifying it's a fresh arrival (vacant → occupied) from the presence log. No issues encountered.
