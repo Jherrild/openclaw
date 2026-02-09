@@ -1,0 +1,13 @@
+{
+  "supernote-sync": {
+    "name": "supernote-sync",
+    "script": "/home/jherrild/.openclaw/workspace/skills/supernote-sync/check-and-sync.sh",
+    "interval": "5m",
+    "args": "",
+    "workingDir": "/home/jherrild/.openclaw/workspace/skills/supernote-sync",
+    "nodePath": "",
+    "unit": "openclaw-task-supernote-sync",
+    "createdAt": "2026-02-09T04:33:35.294Z",
+    "enabled": true
+  }
+}

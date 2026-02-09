@@ -1,0 +1,15 @@
+[Unit]
+Description=OpenClaw Task: {{TASK_NAME}}
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart={{EXEC_START}}
+WorkingDirectory={{WORKING_DIR}}
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:{{HOME}}/.local/bin
+Environment=NODE_PATH={{NODE_PATH}}
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
