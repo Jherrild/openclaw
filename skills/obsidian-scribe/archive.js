@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
+const { execSync, spawn } = require('child_process');
 const { VAULT_ROOT, resolveVaultPath, parseArgs, log } = require('./lib/utils');
 
 /**
@@ -79,4 +79,13 @@ if (path.extname(destPath).toLowerCase() === '.md') {
     }
 } else {
     log.info('Skipping linter for non-markdown file.');
+}
+
+// 5. Fire-and-forget: update local-rag index for archived location
+try {
+    const ragScript = path.join(__dirname, '..', 'local-rag', 'rag.js');
+    const child = spawn('node', [ragScript, 'index', destPath], { detached: true, stdio: 'ignore' });
+    child.unref();
+} catch (e) {
+    log.warn(`RAG index trigger failed: ${e.message}`);
 }

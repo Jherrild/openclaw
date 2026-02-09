@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
+const { execSync, spawn } = require('child_process');
 const { resolveVaultPath, parseArgs, log, normalizeTags } = require('./lib/utils');
 const { updateMapping } = require('./lib/sync-mapping');
 
@@ -60,4 +60,13 @@ try {
     execSync(`node "${lintScript}" "${targetPath}"${tagsArg}`, { stdio: 'inherit' });
 } catch (e) {
     log.warn(`Linting failed: ${e.message}`);
+}
+
+// 4. Fire-and-forget: update local-rag index
+try {
+    const ragScript = path.join(__dirname, '..', 'local-rag', 'rag.js');
+    const child = spawn('node', [ragScript, 'index', targetPath], { detached: true, stdio: 'ignore' });
+    child.unref();
+} catch (e) {
+    log.warn(`RAG index trigger failed: ${e.message}`);
 }
