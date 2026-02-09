@@ -1,5 +1,5 @@
-# Result: Supernote Sync — Absolute Paths & Manifest Parsing Fix
+# Result: Obsidian Scribe — Auto-update Supernote Sync Mapping
 
 **Status:** ✅ Complete
 
-Refactored `check-and-sync.sh` to ensure all internal paths (SKILL_DIR, MAPPING_FILE, LOG_FILE, BUFFER_DIR, .agent-pending, .new-files-buffer, etc.) are absolute, derived from the script's own location via `readlink -f`. Replaced the `build_manifest_array` bash function (which passed pipe-delimited entries through positional parameters, causing word-splitting on filenames with spaces) with a `build_manifest_from_file` function that uses `jq -R -s` to parse buffer files directly — eliminating bash word-splitting entirely. Also added linuxbrew and npm-global to PATH for systemd compatibility, and fixed a dead reference to `$UPDATED_FILES_BUFFER` in the cleanup section. Verified via `orchestrator.js run supernote-sync`: "Test note for Magnus.note" is detected and correctly manifested as a single entry in `.agent-pending`.
+Created `skills/obsidian-scribe/lib/sync-mapping.js` with helpers to load, query, and update `skills/supernote-sync/sync-mapping.json`. Updated `write.js` to accept an optional `--file-id` flag and auto-update the mapping when saving a note that matches a tracked Supernote file (by ID or filename). Updated `move.js` to auto-update the `localPath` in the mapping when a tracked note is moved. All mapping updates are best-effort — if the mapping file is missing or corrupt, the primary file operation still succeeds with a warning.

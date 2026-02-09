@@ -2,14 +2,15 @@ const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 const { resolveVaultPath, parseArgs, log, normalizeTags } = require('./lib/utils');
+const { updateMapping } = require('./lib/sync-mapping');
 
 /**
  * scribe_save - Create a NEW Obsidian note
- * Usage: node write.js <path> <content> [--tags "tag1,tag2"]
+ * Usage: node write.js <path> <content> [--tags "tag1,tag2"] [--file-id <supernote_id>]
  */
 
 const args = parseArgs(process.argv, {
-    string: ['tags'],
+    string: ['tags', 'file-id'],
     alias: { t: 'tags' },
 });
 
@@ -44,7 +45,14 @@ try {
     process.exit(1);
 }
 
-// 2. Run the linter with tags
+// 2. Update Supernote sync mapping (best-effort)
+try {
+    updateMapping({ fileId: args['file-id'] || null, localPath: targetPath });
+} catch (e) {
+    log.warn(`Sync mapping update failed: ${e.message}`);
+}
+
+// 3. Run the linter with tags
 try {
     const lintScript = path.join(__dirname, 'lint.js');
     const tags = normalizeTags(args.tags);

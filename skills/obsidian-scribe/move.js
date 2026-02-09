@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 const { resolveVaultPath, parseArgs, log } = require('./lib/utils');
+const { updateMapping } = require('./lib/sync-mapping');
 
 /**
  * scribe_move - Move a note to a new location
@@ -54,7 +55,14 @@ try {
     process.exit(1);
 }
 
-// 4. Run Linter (ONLY for Markdown files)
+// 4. Update Supernote sync mapping (best-effort)
+try {
+    updateMapping({ fileId: null, localPath: finalDestPath, oldPath: sourcePath });
+} catch (e) {
+    log.warn(`Sync mapping update failed: ${e.message}`);
+}
+
+// 5. Run Linter (ONLY for Markdown files)
 if (path.extname(finalDestPath).toLowerCase() === '.md') {
     try {
         const lintScript = path.join(__dirname, 'lint.js');
