@@ -354,7 +354,7 @@ if (command === 'list') {
   const formatRule = r => {
     const ch = r.channel && r.channel !== 'default' ? r.channel : `default (${config.default_channel})`;
     const sess = r.session_id || 'main';
-    const line = `  [${r.id}] ${r.entity_id}${r.state != null ? ` = ${r.state}` : ' (any)'} — ${r.label || '(no label)'} [channel: ${ch}] [session: ${sess}] [type: ${r.type || 'subagent'}]`;
+    let line = `  [${r.id}] ${r.entity_id}${r.state != null ? ` = ${r.state}` : ' (any)'} — ${r.label || '(no label)'} [channel: ${ch}] [session: ${sess}] [type: ${r.type || 'subagent'}]`;
     if (r.instruction) line += `\n    instruction: ${r.instruction}`;
     return line;
   };

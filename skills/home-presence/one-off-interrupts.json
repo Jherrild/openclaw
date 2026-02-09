@@ -1,1 +1,14 @@
-[]
+[
+  {
+    "id": "int-mlfikcpi-wax4",
+    "entity_id": "light.office_lights",
+    "state": null,
+    "label": "Office Light Toggle Greeting",
+    "message": null,
+    "instruction": "Jesten toggled the office lights. Greet him warmly on the office speaker ('Hello Jesten, I see the lights are back on!') using the follow-and-speak tool. This is a one-off test.",
+    "channel": "default",
+    "session_id": "main",
+    "type": "subagent",
+    "created": "2026-02-09T18:36:54.486Z"
+  }
+]
