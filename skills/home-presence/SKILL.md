@@ -155,6 +155,53 @@ Only entities in `WAKE_ON_ENTITIES` will trigger `openclaw system event`; all ot
 
 The bridge includes an **Intelligent Interrupt Dispatcher** (`interrupt-manager.js`) that lets Magnus (or the user) register conditional alerts — either **persistent** (fire every time) or **one-off** (fire once, then auto-remove).
 
+#### Dual-Pipeline Architecture
+
+Interrupts are classified into two **independent pipelines** based on their `type` field:
+
+| Pipeline | Type | Behavior | Default Batch Window | Default Rate Limit |
+|----------|------|----------|---------------------|-------------------|
+| **Message** | `message` | Direct delivery via `openclaw sessions send` — no AI evaluation | 2s | 10/min |
+| **Subagent** | `subagent` | Spawns a Gemini Flash sub-agent to evaluate context before notifying | 5s | 4/min |
+
+Each pipeline has its own:
+- **Batch queue** — triggers are collected within the pipeline's batch window
+- **Rate limiter** — independent rolling-window rate limit
+- **Circuit breaker** — opens when rate limit is exceeded, recovers automatically
+
+Pipelines never cross: message and subagent interrupts are batched, rate-limited, and dispatched completely independently.
+
+#### Pipeline Settings (`interrupt-settings.json`)
+
+All pipeline constants are stored in `interrupt-settings.json` and can be updated at runtime (the manager hot-reloads the file):
+
+```json
+{
+  "message": {
+    "batch_window_ms": 2000,
+    "rate_limit_max": 10,
+    "rate_limit_window_ms": 60000
+  },
+  "subagent": {
+    "batch_window_ms": 5000,
+    "rate_limit_max": 4,
+    "rate_limit_window_ms": 60000
+  },
+  "file_poll_ms": 2000,
+  "log_limit": 1000
+}
+```
+
+Manage settings via the CLI:
+
+```bash
+# View current settings
+node /home/jherrild/.openclaw/workspace/skills/home-presence/register-interrupt.js get-settings
+
+# Update a setting (JSON merge patch)
+node /home/jherrild/.openclaw/workspace/skills/home-presence/register-interrupt.js set-settings '{"message":{"batch_window_ms":1000}}'
+```
+
 #### Interrupt Files
 
 | File | Purpose |
@@ -190,10 +237,13 @@ The bridge includes an **Intelligent Interrupt Dispatcher** (`interrupt-manager.
 
 #### Batching, Rate Limiting, and Circuit Breaker
 
-- **Batching:** Matched triggers are collected in a **5-second window**. All triggers within that window are combined into a single dispatch.
-- **Dispatch:** Instead of a direct system event, a **sub-agent** (Gemini Flash) is spawned to analyze the interrupt. It checks context (logs, state) and only sends a message to the main session if necessary.
-- **Rate Limiting:** Maximum **4 dispatches per minute** (rolling 60-second window).
-- **Circuit Breaker:** If the rate limit is exceeded, the dispatcher stops firing and logs a warning. It automatically recovers when the rate drops below the limit.
+Each pipeline (`message` and `subagent`) independently:
+
+- **Batching:** Matched triggers are collected in the pipeline's batch window (configurable in `interrupt-settings.json`). All triggers within that window are combined into a single dispatch.
+- **Message Dispatch:** Messages are sent directly via `openclaw sessions send --session <id> --text "..."` — no sub-agent overhead.
+- **Subagent Dispatch:** A **sub-agent** (Gemini Flash) is spawned to analyze the interrupt. It checks context (logs, state) and only sends a message to the main session if necessary.
+- **Rate Limiting:** Each pipeline has its own max dispatches per window (e.g., message: 10/min, subagent: 4/min).
+- **Circuit Breaker:** If a pipeline's rate limit is exceeded, that pipeline stops firing and logs a warning. It automatically recovers when the rate drops below the limit. The other pipeline is unaffected.
 
 All interrupt activity (queued, batched, dispatched, rate-limited) is logged to `ha-bridge.status.log`.
 
@@ -214,6 +264,9 @@ node /home/jherrild/.openclaw/workspace/skills/home-presence/register-interrupt.
 # Specify a notification channel explicitly
 node /home/jherrild/.openclaw/workspace/skills/home-presence/register-interrupt.js persistent binary_sensor.front_door_motion --state on --label "Front door" --channel telegram
 
+# Register a direct-message interrupt (bypasses sub-agent evaluation)
+node /home/jherrild/.openclaw/workspace/skills/home-presence/register-interrupt.js persistent binary_sensor.front_door_motion --state on --label "Front door" --type message --message "Motion at front door!"
+
 # Wildcard: any light turning on (skips entity existence check, validates state)
 node /home/jherrild/.openclaw/workspace/skills/home-presence/register-interrupt.js persistent "light.*" --state on --label "Light activated"
 
@@ -225,6 +278,12 @@ node /home/jherrild/.openclaw/workspace/skills/home-presence/register-interrupt.
 
 # Remove an interrupt by ID
 node /home/jherrild/.openclaw/workspace/skills/home-presence/register-interrupt.js remove int-abc123
+
+# View pipeline settings
+node /home/jherrild/.openclaw/workspace/skills/home-presence/register-interrupt.js get-settings
+
+# Update message pipeline rate limit
+node /home/jherrild/.openclaw/workspace/skills/home-presence/register-interrupt.js set-settings '{"message":{"rate_limit_max":20}}'
 ```
 
 **Validation behavior:**

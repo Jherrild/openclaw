@@ -1,0 +1,14 @@
+{
+  "message": {
+    "batch_window_ms": 2000,
+    "rate_limit_max": 10,
+    "rate_limit_window_ms": 60000
+  },
+  "subagent": {
+    "batch_window_ms": 5000,
+    "rate_limit_max": 4,
+    "rate_limit_window_ms": 60000
+  },
+  "file_poll_ms": 2000,
+  "log_limit": 1000
+}

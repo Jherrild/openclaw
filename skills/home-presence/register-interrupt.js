@@ -17,6 +17,7 @@ const { execFileSync } = require('child_process');
 const PERSISTENT_FILE = path.join(__dirname, 'persistent-interrupts.json');
 const ONEOFF_FILE = path.join(__dirname, 'one-off-interrupts.json');
 const CONFIG_FILE = path.join(__dirname, 'config.json');
+const SETTINGS_FILE = path.join(__dirname, 'interrupt-settings.json');
 
 const HA_URL = 'http://homeassistant:8123';
 const TOKEN = (() => {
@@ -120,8 +121,8 @@ function validateState(entityId, state) {
  * Returns { valid: true } or { valid: false, error: string }.
  */
 async function validateEntity(entityId, state) {
-  // Wildcard patterns skip existence check but still validate state
-  if (entityId.includes('*')) {
+  // Wildcard patterns and virtual entities (starting with 'magnus.') skip existence check
+  if (entityId.includes('*') || entityId.startsWith('magnus.')) {
     if (state !== null && state !== undefined) {
       const stateCheck = validateState(entityId, state);
       if (!stateCheck.valid) {
@@ -223,6 +224,8 @@ function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--skip-validation') {
       args['skip-validation'] = true;
+    } else if (argv[i] === '--session-id' && i + 1 < argv.length) {
+      args['session-id'] = argv[++i];
     } else if (argv[i].startsWith('--') && i + 1 < argv.length) {
       args[argv[i].slice(2)] = argv[++i];
     } else {
@@ -234,10 +237,12 @@ function parseArgs(argv) {
 
 function usage() {
   console.log(`Usage:
-  node register-interrupt.js persistent <entity_id> [--state <state>] [--label <label>] [--message <msg>] [--instruction <text>] [--channel <channel>] [--skip-validation]
-  node register-interrupt.js one-off    <entity_id> [--state <state>] [--label <label>] [--message <msg>] [--instruction <text>] [--channel <channel>] [--skip-validation]
+  node register-interrupt.js persistent <entity_id> [--state <state>] [--label <label>] [--message <msg>] [--instruction <text>] [--channel <channel>] [--type <type>] [--session-id <id>] [--skip-validation]
+  node register-interrupt.js one-off    <entity_id> [--state <state>] [--label <label>] [--message <msg>] [--instruction <text>] [--channel <channel>] [--type <type>] [--session-id <id>] [--skip-validation]
   node register-interrupt.js list
   node register-interrupt.js remove <id>
+  node register-interrupt.js get-settings
+  node register-interrupt.js set-settings <json-patch>
 
 Options:
   --skip-validation   Skip live entity and channel validation
@@ -246,6 +251,17 @@ Options:
   --channel           Notification channel to use when dispatching (e.g., "telegram").
                       If omitted, defaults to "default" which resolves to config.json's default_channel at dispatch time.
                       Valid channels are retrieved from "openclaw channels list --json".
+  --session-id        Target session ID for the notification (default: "main").
+  --type              Dispatch mode: "subagent" (default) or "message".
+                      - "subagent": Spawns an AI agent to analyze the situation before notifying.
+                        Batched on its own window and rate limit (see interrupt-settings.json).
+                      - "message": Directly sends a message to the main session (lower latency).
+                        Has its own separate batch window and rate limit.
+
+Settings Management:
+  get-settings        Show current interrupt pipeline settings (batch windows, rate limits).
+  set-settings        Update settings with a JSON patch. Example:
+                        node register-interrupt.js set-settings '{"message":{"batch_window_ms":3000}}'
 
 Examples:
   # Alert when front door motion is detected
@@ -272,6 +288,12 @@ Examples:
   # Remove an interrupt by ID
   node register-interrupt.js remove int-abc123
 
+  # View pipeline settings
+  node register-interrupt.js get-settings
+
+  # Update message pipeline batch window
+  node register-interrupt.js set-settings '{"message":{"batch_window_ms":1000}}'
+
 Interrupt schema:
   {
     "id": "auto-generated",
@@ -281,16 +303,37 @@ Interrupt schema:
     "message": "custom message text",  // optional — used in the system event
     "instruction": "Tell the agent how to react",  // optional — appended to system event
     "channel": "default",     // optional — notification channel ("default" resolves to config.json)
+    "session_id": "main",     // optional — target session ID (default: "main")
+    "type": "subagent",       // optional — "subagent" (default) or "message"
     "created": "ISO timestamp"
   }
 
 Validation:
   Entity IDs are validated against live Home Assistant entities before saving.
   If the entity doesn't exist, you'll get suggestions for similar entities.
-  Wildcard patterns (e.g. 'light.*') skip entity existence checks.
+  Wildcard patterns (e.g. 'light.*') and virtual entities (starting with 'magnus.') skip entity existence checks.
   State values are validated against known domain states (e.g. binary_sensor: on/off).
   Channel names are validated against "openclaw channels list --json".
   Use --skip-validation to bypass all checks.`);
+}
+
+function readSettings() {
+  try {
+    return JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
+  } catch {
+    return {
+      message:  { batch_window_ms: 2000, rate_limit_max: 10, rate_limit_window_ms: 60000 },
+      subagent: { batch_window_ms: 5000, rate_limit_max: 4, rate_limit_window_ms: 60000 },
+      file_poll_ms: 2000,
+      log_limit: 1000,
+    };
+  }
+}
+
+function writeSettings(settings) {
+  const bak = SETTINGS_FILE + '.bak';
+  if (fs.existsSync(SETTINGS_FILE)) fs.copyFileSync(SETTINGS_FILE, bak);
+  fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2) + '\n');
 }
 
 // ── Main ────────────────────────────────────────────────────────────────────
@@ -310,7 +353,8 @@ if (command === 'list') {
   const config = readConfig();
   const formatRule = r => {
     const ch = r.channel && r.channel !== 'default' ? r.channel : `default (${config.default_channel})`;
-    let line = `  [${r.id}] ${r.entity_id}${r.state != null ? ` = ${r.state}` : ' (any)'} — ${r.label || '(no label)'} [channel: ${ch}]`;
+    const sess = r.session_id || 'main';
+    const line = `  [${r.id}] ${r.entity_id}${r.state != null ? ` = ${r.state}` : ' (any)'} — ${r.label || '(no label)'} [channel: ${ch}] [session: ${sess}] [type: ${r.type || 'subagent'}]`;
     if (r.instruction) line += `\n    instruction: ${r.instruction}`;
     return line;
   };
@@ -341,6 +385,39 @@ if (command === 'remove') {
   process.exit(found ? 0 : 1);
 }
 
+if (command === 'get-settings') {
+  const settings = readSettings();
+  console.log(JSON.stringify(settings, null, 2));
+  process.exit(0);
+}
+
+if (command === 'set-settings') {
+  const patchStr = args._positional[1];
+  if (!patchStr) {
+    console.error('Error: provide a JSON patch. Example: \'{"message":{"batch_window_ms":3000}}\'');
+    process.exit(1);
+  }
+  let patch;
+  try {
+    patch = JSON.parse(patchStr);
+  } catch (e) {
+    console.error(`Error: invalid JSON: ${e.message}`);
+    process.exit(1);
+  }
+  const settings = readSettings();
+  for (const k of ['message', 'subagent']) {
+    if (patch[k] && typeof patch[k] === 'object') {
+      settings[k] = { ...settings[k], ...patch[k] };
+    }
+  }
+  if (patch.file_poll_ms !== undefined) settings.file_poll_ms = patch.file_poll_ms;
+  if (patch.log_limit !== undefined) settings.log_limit = patch.log_limit;
+  writeSettings(settings);
+  console.log('Settings updated:');
+  console.log(JSON.stringify(settings, null, 2));
+  process.exit(0);
+}
+
 if (command === 'persistent' || command === 'one-off') {
   const entityId = args._positional[1];
   if (!entityId) { console.error('Error: provide an entity_id.'); usage(); process.exit(1); }
@@ -365,6 +442,13 @@ if (command === 'persistent' || command === 'one-off') {
       }
     }
 
+    // Validate type
+    const type = args.type || 'subagent';
+    if (!['subagent', 'message'].includes(type)) {
+      console.error(`Error: Invalid type '${type}'. Must be 'subagent' or 'message'.`);
+      process.exit(1);
+    }
+
     const rule = {
       id: generateId(),
       entity_id: entityId,
@@ -373,6 +457,8 @@ if (command === 'persistent' || command === 'one-off') {
       message: args.message || null,
       instruction: args.instruction || null,
       channel: channel,
+      session_id: args['session-id'] || 'main',
+      type: type,
       created: new Date().toISOString(),
     };
 
