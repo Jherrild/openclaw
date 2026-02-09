@@ -5,5 +5,6 @@
   "chunk_size": 1000,
   "chunk_overlap": 200,
   "top_k": 20,
-  "db_dir": "~/.local-rag"
+  "db_dir": "~/.local-rag",
+  "concurrency": 5
 }

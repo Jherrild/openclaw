@@ -34,13 +34,27 @@ export async function embed(text, isQuery = true) {
   return data.embedding;
 }
 
-// Generate embeddings for multiple texts (batched)
-export async function embedBatch(texts, onProgress, isQuery = false) {
-  const embeddings = [];
-  for (let i = 0; i < texts.length; i++) {
-    embeddings.push(await embed(texts[i], isQuery));
-    if (onProgress) onProgress(i + 1, texts.length);
+// Generate embeddings for multiple texts with parallel batching
+export async function embedBatch(texts, onProgress, isQuery = false, concurrency = 5) {
+  const embeddings = new Array(texts.length);
+  let completed = 0;
+
+  for (let i = 0; i < texts.length; i += concurrency) {
+    const batch = texts.slice(i, Math.min(i + concurrency, texts.length));
+    const results = await Promise.all(
+      batch.map((text, j) =>
+        embed(text, isQuery).then(emb => {
+          completed++;
+          if (onProgress) onProgress(completed, texts.length);
+          return { index: i + j, embedding: emb };
+        })
+      )
+    );
+    for (const { index, embedding } of results) {
+      embeddings[index] = embedding;
+    }
   }
+
   return embeddings;
 }
 

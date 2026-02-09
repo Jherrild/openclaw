@@ -10,7 +10,7 @@
  */
 import fs from 'fs';
 import path from 'path';
-import { openDb, insertChunk, deleteFile, getAllDocuments, getDocCount, clearAll, getDbPath, insertFileMetadata, getAllFileMetadata } from './db.js';
+import { openDb, insertChunk, deleteFile, deleteFileMetadata, getAllDocuments, getDocCount, clearAll, getDbPath, insertFileMetadata, getAllFileMetadata, getFileMtimes, updateFileMtime, findSourceDirForFile } from './db.js';
 import { checkOllama, embed, embedBatch, cosineSimilarity, chat } from './embeddings.js';
 
 const CONFIG = JSON.parse(fs.readFileSync(new URL('./config.json', import.meta.url)));
@@ -139,74 +139,137 @@ async function cmdCheck() {
   }
 }
 
-async function cmdIndex(dirPath) {
-  if (!dirPath) {
-    console.error('Usage: node rag.js index <directory>');
+async function cmdIndex(paths) {
+  if (!paths || paths.length === 0) {
+    console.error('Usage: node rag.js index <directory|file> [file2 ...]');
     process.exit(1);
   }
-  
-  const absDir = path.resolve(dirPath);
-  if (!fs.existsSync(absDir)) {
-    console.error(`Directory not found: ${absDir}`);
+
+  const firstPath = path.resolve(paths[0]);
+  if (!fs.existsSync(firstPath)) {
+    console.error(`Not found: ${firstPath}`);
     process.exit(1);
   }
-  
+
   // Check Ollama
   if (!await checkOllama()) {
     console.error('Ollama is not reachable. Run: ollama serve');
     process.exit(1);
   }
-  
+
+  const concurrency = CONFIG.concurrency || 5;
+  const targetStats = fs.statSync(firstPath);
+  let absDir;
+  let filesToProcess; // Array of { filePath, mtime }
+  let isFullScan = false;
+
+  if (targetStats.isFile()) {
+    // Single-file mode: find the vault this file belongs to
+    absDir = findSourceDirForFile(firstPath);
+    if (!absDir) {
+      console.error(`No indexed vault found for: ${firstPath}`);
+      console.error('Index the parent directory first: node rag.js index <directory>');
+      process.exit(1);
+    }
+    const files = paths.map(f => path.resolve(f)).filter(f => fs.existsSync(f) && fs.statSync(f).isFile());
+    filesToProcess = files.map(f => ({ filePath: f, mtime: fs.statSync(f).mtimeMs }));
+  } else {
+    // Directory mode
+    absDir = firstPath;
+    if (paths.length > 1) {
+      // Specific files within this directory
+      const files = paths.slice(1).map(f => path.resolve(f)).filter(f => fs.existsSync(f));
+      filesToProcess = files.map(f => ({ filePath: f, mtime: fs.statSync(f).mtimeMs }));
+    } else {
+      isFullScan = true;
+    }
+  }
+
   console.log(`Indexing: ${absDir}`);
   console.log(`Database: ${getDbPath(absDir)}`);
-  
+
   const db = openDb(absDir);
-  clearAll(db); // Fresh index
-  
-  const files = walkDir(absDir);
-  console.log(`Found ${files.length} markdown files\n`);
-  
+
+  if (isFullScan) {
+    // Incremental: compare mtimes
+    const allFiles = walkDir(absDir);
+    const storedMtimes = getFileMtimes(db);
+    const currentPaths = new Set();
+
+    filesToProcess = [];
+    for (const filePath of allFiles) {
+      currentPaths.add(filePath);
+      const currentMtime = fs.statSync(filePath).mtimeMs;
+      const storedMtime = storedMtimes.get(filePath);
+      if (storedMtime === undefined || currentMtime > storedMtime) {
+        filesToProcess.push({ filePath, mtime: currentMtime });
+      }
+    }
+
+    // Remove deleted files from index
+    const deleted = [];
+    for (const storedPath of storedMtimes.keys()) {
+      if (!currentPaths.has(storedPath)) deleted.push(storedPath);
+    }
+    if (deleted.length > 0) {
+      console.log(`Removing ${deleted.length} deleted file(s) from index`);
+      for (const dp of deleted) {
+        deleteFile(db, dp);
+        deleteFileMetadata(db, dp);
+      }
+    }
+
+    if (filesToProcess.length === 0) {
+      console.log(`\n✓ Index is up to date (${allFiles.length} files, 0 changed)`);
+      db.close();
+      return;
+    }
+
+    console.log(`Found ${allFiles.length} files, ${filesToProcess.length} new/modified, ${deleted.length} deleted\n`);
+  } else {
+    console.log(`Indexing ${filesToProcess.length} specific file(s)\n`);
+  }
+
+  // Process files
   let totalChunks = 0;
-  
-  for (let i = 0; i < files.length; i++) {
-    const filePath = files[i];
+
+  for (let i = 0; i < filesToProcess.length; i++) {
+    const { filePath, mtime } = filesToProcess[i];
     const relPath = path.relative(absDir, filePath);
-    let content = fs.readFileSync(filePath, 'utf-8');
-    
-    // Skip binary-looking files (heuristic: long strings without spaces)
+    const content = fs.readFileSync(filePath, 'utf-8');
+
+    // Skip binary-looking files
     if (/[a-zA-Z0-9+/]{100,}/.test(content) && content.includes('AooooA')) {
       console.log(` - Skipping ${relPath} (appears to be binary/base64)`);
       continue;
     }
-    
     if (!content.trim()) continue;
-    
-    // Extract metadata from file
+
+    // Remove old data for this file before re-indexing
+    deleteFile(db, filePath);
+
     const metadata = extractMetadata(filePath, content);
-    
-    // Store file metadata for hybrid search
     insertFileMetadata(db, filePath, metadata.filename, metadata.title, metadata.tags, metadata.aliases, metadata.headers);
-    
-    // Create chunks with metadata prefix for richer embeddings
+
     const metadataPrefix = createMetadataPrefix(metadata);
     const chunks = chunkText(metadata.body);
     const enrichedChunks = chunks.map(chunk => metadataPrefix + chunk);
-    
-    process.stdout.write(`[${i + 1}/${files.length}] ${relPath} (${chunks.length} chunks)...`);
-    
-    const embeddings = await embedBatch(enrichedChunks, (curr, total) => {}, false);
-    
+
+    process.stdout.write(`[${i + 1}/${filesToProcess.length}] ${relPath} (${chunks.length} chunks)...`);
+
+    const embeddings = await embedBatch(enrichedChunks, null, false, concurrency);
+
     for (let j = 0; j < chunks.length; j++) {
-      // Store original chunk content, but embedding is from enriched version
       insertChunk(db, filePath, j, chunks[j], embeddings[j]);
     }
-    
+
+    updateFileMtime(db, filePath, mtime);
     totalChunks += chunks.length;
     console.log(' ✓');
   }
-  
+
   db.close();
-  console.log(`\n✓ Indexed ${totalChunks} chunks from ${files.length} files`);
+  console.log(`\n✓ Indexed ${totalChunks} chunks from ${filesToProcess.length} files`);
 }
 
 async function cmdSearch(query, dirPath) {
@@ -388,7 +451,7 @@ switch (command) {
     cmdCheck().catch(console.error);
     break;
   case 'index':
-    cmdIndex(args[1]).catch(console.error);
+    cmdIndex(args.slice(1)).catch(console.error);
     break;
   case 'search':
     cmdSearch(args[1], args[2]).catch(console.error);
@@ -401,14 +464,17 @@ switch (command) {
 Local RAG - Semantic Search with SQLite + Ollama
 
 Usage:
-  node rag.js check                        Check Ollama connectivity
-  node rag.js index <directory>            Index a directory of markdown files
-  node rag.js search "<query>" <directory> Search indexed content
-  node rag.js query "<question>" <directory> RAG answer synthesis
+  node rag.js check                                Check Ollama connectivity
+  node rag.js index <directory>                    Incremental index of a directory
+  node rag.js index <directory> <file1> [file2...] Index specific files in a vault
+  node rag.js index <file>                         Index a single file (vault must exist)
+  node rag.js search "<query>" <directory>         Search indexed content
+  node rag.js query "<question>" <directory>       RAG answer synthesis
 
 Examples:
   node rag.js check
   node rag.js index ~/notes
+  node rag.js index ~/notes/new-note.md
   node rag.js search "machine learning" ~/notes
   node rag.js query "What are the key points about X?" ~/notes
 

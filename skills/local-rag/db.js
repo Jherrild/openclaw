@@ -60,6 +60,12 @@ export function openDb(dirPath) {
     );
     CREATE INDEX IF NOT EXISTS idx_filename ON file_metadata(filename);
   `);
+
+  // Migration: add mtime column to file_metadata if missing
+  const cols = db.pragma('table_info(file_metadata)');
+  if (!cols.find(c => c.name === 'mtime')) {
+    db.exec('ALTER TABLE file_metadata ADD COLUMN mtime REAL');
+  }
   
   // Store the indexed directory path
   db.prepare('INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)')
@@ -133,4 +139,45 @@ export function getAllFileMetadata(db) {
       aliases: JSON.parse(row.aliases || '[]'),
       headers: JSON.parse(row.headers || '[]')
     }));
+}
+
+// Get stored mtimes as Map<file_path, mtime>
+export function getFileMtimes(db) {
+  const rows = db.prepare('SELECT file_path, mtime FROM file_metadata').all();
+  const map = new Map();
+  for (const row of rows) {
+    if (row.mtime != null) map.set(row.file_path, row.mtime);
+  }
+  return map;
+}
+
+// Update mtime for a file
+export function updateFileMtime(db, filePath, mtime) {
+  db.prepare('UPDATE file_metadata SET mtime = ? WHERE file_path = ?').run(mtime, filePath);
+}
+
+// Delete file metadata entry
+export function deleteFileMetadata(db, filePath) {
+  db.prepare('DELETE FROM file_metadata WHERE file_path = ?').run(filePath);
+}
+
+// Find the source directory (vault) for a given file path by scanning existing DBs
+export function findSourceDirForFile(filePath) {
+  const absFile = path.resolve(filePath);
+  if (!fs.existsSync(DB_DIR)) return null;
+
+  const dbFiles = fs.readdirSync(DB_DIR).filter(f => f.endsWith('.db'));
+  for (const dbFile of dbFiles) {
+    try {
+      const db = new Database(path.join(DB_DIR, dbFile));
+      const row = db.prepare("SELECT value FROM metadata WHERE key = 'source_dir'").get();
+      db.close();
+      if (row && absFile.startsWith(row.value + path.sep)) {
+        return row.value;
+      }
+    } catch {
+      // Skip unreadable DBs
+    }
+  }
+  return null;
 }
