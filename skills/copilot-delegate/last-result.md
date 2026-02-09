@@ -1,3 +1,3 @@
-# Result: Add reset command to local-rag
+# Result: Update local-rag SKILL.md with workspace search use cases
 
-Added a `reset` command to `skills/local-rag/rag.js` that locates the SQLite database for a given directory via `getDbPath()`, deletes it with `fs.unlinkSync`, and logs the deletion. The command handles the case where no index exists gracefully, and the help text was updated to document the new `reset` subcommand. Syntax check passed with no issues.
+Updated `skills/local-rag/SKILL.md` to document recursive indexing behavior (including symlink traversal), added a "Use Cases" section showing how to leverage local-rag for Obsidian vault search, full workspace search, and targeted skill documentation search, plus a suggested workflow for internal skill discovery. All changes are documentation-only; no code was modified.
