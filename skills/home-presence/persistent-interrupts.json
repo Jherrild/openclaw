@@ -19,16 +19,5 @@
     "channel": "default",
     "type": "message",
     "created": "2026-02-09T09:06:50.520Z"
-  },
-  {
-    "id": "int-office-joke",
-    "entity_id": "binary_sensor.everything_presence_lite_4f1008_occupancy",
-    "state": "on",
-    "label": "Office Arrival Joke",
-    "message": null,
-    "instruction": "Jesten's office presence has changed. Tell him a short, witty joke via Telegram. Check the presence log to ensure this is a fresh arrival (vacant -> occupied) before sending.",
-    "channel": "telegram",
-    "type": "subagent",
-    "created": "2026-02-09T17:18:35.920Z"
   }
 ]
