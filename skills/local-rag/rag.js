@@ -441,6 +441,26 @@ async function cmdQuery(question, dirPath) {
   console.log(answer);
 }
 
+function cmdReset(dirPath) {
+  if (!dirPath) {
+    console.error('Usage: node rag.js reset <directory>');
+    process.exit(1);
+  }
+
+  const absDir = path.resolve(dirPath);
+  const dbPath = getDbPath(absDir);
+
+  if (!fs.existsSync(dbPath)) {
+    console.log(`No index found for: ${absDir}`);
+    console.log('Nothing to reset.');
+    return;
+  }
+
+  fs.unlinkSync(dbPath);
+  console.log(`Deleted index database: ${dbPath}`);
+  console.log(`Index for ${absDir} has been reset.`);
+}
+
 // --- CLI ---
 
 const args = process.argv.slice(2);
@@ -459,6 +479,9 @@ switch (command) {
   case 'query':
     cmdQuery(args[1], args[2]).catch(console.error);
     break;
+  case 'reset':
+    cmdReset(args[1]);
+    break;
   default:
     console.log(`
 Local RAG - Semantic Search with SQLite + Ollama
@@ -470,6 +493,7 @@ Usage:
   node rag.js index <file>                         Index a single file (vault must exist)
   node rag.js search "<query>" <directory>         Search indexed content
   node rag.js query "<question>" <directory>       RAG answer synthesis
+  node rag.js reset <directory>                    Delete index database for a directory
 
 Examples:
   node rag.js check
@@ -477,6 +501,7 @@ Examples:
   node rag.js index ~/notes/new-note.md
   node rag.js search "machine learning" ~/notes
   node rag.js query "What are the key points about X?" ~/notes
+  node rag.js reset ~/notes
 
 Configuration:
   Edit config.json to change models, chunk size, etc.
