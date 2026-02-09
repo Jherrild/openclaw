@@ -25,6 +25,6 @@ Current architecture attempts to POST to the OpenClaw REST API directly from Hom
   - "Instructions: Analyze the command. If it's a request to file something, use obsidian-scribe. If it's a task, use google-tasks. If it's a general question, answer it. Reply back to the main session ONLY if you have a response for Jesten."
 
 ## Implementation Plan
-1. **HA Side:** Update `skills/google-home-bridge/ha_config/automation_magnus_webhook.yaml` to fire an event instead of a REST command.
+1. **HA Side:** Update `skills/google-home-bridge/ha_config/` configs (script, Assist automation, Webhook automation) to fire the `magnus_voice_command` event instead of a REST command.
 2. **Bridge Side:** Update `ha-bridge.js` to handle this specific event type (if not already covered by general state changes).
 3. **Registration:** Use `register-interrupt.js` to create the persistent voice command handler.

@@ -19,8 +19,10 @@ tell_magnus:
   variables:
     message: "{{ message | default('(no message)') }}"
   sequence:
-    - action: rest_command.post_magnus_message
+    - action: event.fire
       data:
-        message: "{{ message }}"
+        event_type: magnus_voice_command
+        event_data:
+          message: "{{ message }}"
   mode: single
   icon: mdi:message-text-outline
