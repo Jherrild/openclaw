@@ -202,16 +202,43 @@ class InterruptManager {
         if (b.instruction) s += ` [instruction: ${b.instruction}]`;
         return s;
       });
-      const text = `home-presence interrupt: ${summaries.join(' | ')} [instruction: You MUST use the 'message' tool to notify the user on '${channel}'. Do not just reply with text.]`;
 
-      this._statusLog('info', `Dispatching openclaw system event (channel: ${channel}): ${text}`);
+      // Construct sub-agent prompt
+      const prompt = `You are a home automation sub-agent handling an interrupt.
 
-      execFile('openclaw', ['system', 'event', '--text', text, '--mode', 'now'], (err, stdout, stderr) => {
+INTERRUPT DETAILS:
+${summaries.join('\n')}
+
+YOUR GOAL:
+1. Analyze the interrupt and any provided instructions.
+2. Check relevant logs (e.g. skills/home-presence/presence-log.jsonl) or use 'GetLiveContext' if needed to verify conditions.
+3. DECIDE: Does the user need to be notified?
+
+IF NOTIFICATION IS NEEDED:
+- Send a message to the main session using: openclaw sessions send --session main --text "Your message here"
+- Use the provided channel: '${channel}' (mention this in your message if relevant, or format accordingly).
+
+IF NO NOTIFICATION IS NEEDED:
+- Exit silently.
+
+CRITICAL:
+- Be concise.
+- Only notify if the condition is truly met and important.
+- Do NOT simply echo the interrupt; add value or verify context.`;
+
+      this._statusLog('info', `Spawning sub-agent for interrupt(s) on channel: ${channel}`);
+
+      execFile('openclaw', [
+        'sessions', 'spawn',
+        '--model', 'gemini-flash-1.5',
+        '--prompt', prompt,
+        '--quiet' // Suppress output unless error
+      ], (err, stdout, stderr) => {
         if (err) {
-          this._statusLog('error', `openclaw system event failed: ${err.message}`);
+          this._statusLog('error', `Failed to spawn sub-agent: ${err.message}`);
           if (stderr) this._statusLog('error', `  stderr: ${stderr.trim()}`);
         } else {
-          this._statusLog('info', `Dispatch successful (${triggers.length} interrupt(s), channel: ${channel})`);
+          this._statusLog('info', `Sub-agent spawned successfully (${triggers.length} interrupt(s))`);
         }
       });
     }

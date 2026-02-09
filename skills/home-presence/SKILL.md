@@ -190,7 +190,8 @@ The bridge includes an **Intelligent Interrupt Dispatcher** (`interrupt-manager.
 
 #### Batching, Rate Limiting, and Circuit Breaker
 
-- **Batching:** Matched triggers are collected in a **5-second window**. All triggers within that window are combined into a single `openclaw system event`.
+- **Batching:** Matched triggers are collected in a **5-second window**. All triggers within that window are combined into a single dispatch.
+- **Dispatch:** Instead of a direct system event, a **sub-agent** (Gemini Flash) is spawned to analyze the interrupt. It checks context (logs, state) and only sends a message to the main session if necessary.
 - **Rate Limiting:** Maximum **4 dispatches per minute** (rolling 60-second window).
 - **Circuit Breaker:** If the rate limit is exceeded, the dispatcher stops firing and logs a warning. It automatically recovers when the rate drops below the limit.
 
