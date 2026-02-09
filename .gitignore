@@ -5,3 +5,9 @@ memory/*
 skills/copilot-delegate/sessions/*
 .agent-pending
 .copilot-session
+skills/**/*jsonl
+skills/**/*json.bak
+skills/**/*jsonl.bak
+skills/**/*.log
+skills/**/*.log.bak
+skills/node_modules/*
