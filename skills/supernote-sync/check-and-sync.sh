@@ -1,11 +1,22 @@
 #!/bin/bash
 set -euo pipefail
 
-SKILL_DIR="$HOME/.openclaw/workspace/skills/supernote-sync"
+# Ensure linuxbrew tools (jq, node) and npm-global (openclaw) are in PATH for systemd
+export PATH="/home/linuxbrew/.linuxbrew/bin:/home/jherrild/.npm-global/bin:$PATH"
+
+# Derive SKILL_DIR from script's own location (works reliably under systemd)
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+SKILL_DIR="$(dirname "$SCRIPT_PATH")"
+WORKSPACE_DIR="$(dirname "$(dirname "$SKILL_DIR")")"
+
+# All paths are now absolute based on script location
 MAPPING_FILE="$SKILL_DIR/sync-mapping.json"
 LOG_FILE="$SKILL_DIR/sync.log"
 BUFFER_DIR="$SKILL_DIR/buffer"
-NODE_PATH_VAL="$HOME/.openclaw/workspace/skills/google-tasks/node_modules"
+NEW_FILES_BUFFER="$SKILL_DIR/.new-files-buffer"
+UPDATED_FILES_BUFFER="$SKILL_DIR/.updated-files-buffer"
+AGENT_PENDING="$SKILL_DIR/.agent-pending"
+NODE_PATH_VAL="$WORKSPACE_DIR/skills/google-tasks/node_modules"
 
 log() { echo "[$(date -Iseconds)] $*" >> "$LOG_FILE"; }
 
@@ -33,8 +44,8 @@ if [ -z "$REMOTE" ] || [ "$REMOTE" == "null" ]; then
 fi
 
 # Manifest accumulators (pipe-delimited: fileId|fileName|remoteTimestamp)
-> "$SKILL_DIR/.new-files-buffer"
-> "$SKILL_DIR/.updated-files-buffer"
+> "$NEW_FILES_BUFFER"
+> "$UPDATED_FILES_BUFFER"
 
 # Process each remote file
 log "Processing remote files..."
@@ -68,7 +79,7 @@ while read -r file; do
           '.[$id].modifiedTime = $ts' \
           "$MAPPING_FILE" > "$MAPPING_FILE.tmp" && mv "$MAPPING_FILE.tmp" "$MAPPING_FILE"
         log "Updated: $FILE_NAME -> $LOCAL_PATH"
-        echo "${FILE_ID}|${FILE_NAME}|${REMOTE_TS}|${LOCAL_PATH}" >> "$SKILL_DIR/.updated-files-buffer"
+        echo "${FILE_ID}|${FILE_NAME}|${REMOTE_TS}|${LOCAL_PATH}" >> "$UPDATED_FILES_BUFFER"
       else
         log "ERROR: Failed to download $FILE_NAME"
       fi
@@ -78,58 +89,49 @@ while read -r file; do
     log "PATH B: New file detected: $FILE_NAME ($FILE_ID)"
     if export NODE_PATH=$NODE_PATH_VAL && node "$SKILL_DIR/download_file.js" "$FILE_ID" "$BUFFER_DIR/$FILE_NAME"; then
       log "Downloaded new file to buffer: $FILE_NAME"
-      echo "${FILE_ID}|${FILE_NAME}|${REMOTE_TS}" >> "$SKILL_DIR/.new-files-buffer"
+      echo "${FILE_ID}|${FILE_NAME}|${REMOTE_TS}" >> "$NEW_FILES_BUFFER"
     else
       log "ERROR: Failed to download new file $FILE_NAME"
     fi
   fi
 done < <(echo "$REMOTE" | jq -c '.[]')
 
-# Build manifest from accumulators
-NEW_FILES=()
-UPDATED_FILES=()
-if [ -s "$SKILL_DIR/.new-files-buffer" ]; then
-  mapfile -t NEW_FILES < "$SKILL_DIR/.new-files-buffer"
-fi
-if [ -s "$SKILL_DIR/.updated-files-buffer" ]; then
-  mapfile -t UPDATED_FILES < "$SKILL_DIR/.updated-files-buffer"
-fi
-rm -f "$SKILL_DIR/.new-files-buffer" "$SKILL_DIR/.updated-files-buffer"
-
-UPDATED=${#UPDATED_FILES[@]}
-NEW=${#NEW_FILES[@]}
-
-# Build JSON manifest
-build_manifest_array() {
-  local type="$1"
-  shift
-  local arr="$@"
-  local json="[]"
-  for entry in $arr; do
-    local f_id=$(echo "$entry" | cut -d'|' -f1)
-    local f_name=$(echo "$entry" | cut -d'|' -f2)
-    local f_ts=$(echo "$entry" | cut -d'|' -f3)
-    local f_path=$(echo "$entry" | cut -d'|' -f4)
-    if [ -n "$f_path" ]; then
-      json=$(echo "$json" | jq --arg id "$f_id" --arg name "$f_name" --arg ts "$f_ts" --arg path "$f_path" \
-        '. += [{"fileId": $id, "name": $name, "modifiedTime": $ts, "localPath": $path}]')
-    else
-      json=$(echo "$json" | jq --arg id "$f_id" --arg name "$f_name" --arg ts "$f_ts" \
-        '. += [{"fileId": $id, "name": $name, "modifiedTime": $ts}]')
-    fi
-  done
-  echo "$json"
+# Build JSON manifest directly from pipe-delimited buffer files via jq
+# Avoids bash word-splitting issues with filenames containing spaces
+build_manifest_from_file() {
+  local file="$1"
+  if [ ! -s "$file" ]; then
+    echo "[]"
+    return
+  fi
+  jq -R -s '
+    split("\n") | map(select(length > 0)) | map(
+      split("|") |
+      if length >= 4 then
+        {"fileId": .[0], "name": .[1], "modifiedTime": .[2], "localPath": .[3]}
+      else
+        {"fileId": .[0], "name": .[1], "modifiedTime": .[2]}
+      end
+    )
+  ' < "$file"
 }
+
+NEW_JSON=$(build_manifest_from_file "$NEW_FILES_BUFFER")
+UPDATED_JSON=$(build_manifest_from_file "$UPDATED_FILES_BUFFER")
+rm -f "$NEW_FILES_BUFFER" "$UPDATED_FILES_BUFFER"
+
+NEW=$(echo "$NEW_JSON" | jq 'length')
+UPDATED=$(echo "$UPDATED_JSON" | jq 'length')
 
 # Wake agent if new files found (with re-wake guard + staleness check)
 LOCK_STALE_SECONDS=1800  # 30 minutes
 if [ "$NEW" -gt 0 ]; then
   SHOULD_WAKE=false
-  if [ -f "$SKILL_DIR/.agent-pending" ]; then
-    LOCK_AGE=$(( $(date +%s) - $(stat -c %Y "$SKILL_DIR/.agent-pending") ))
+  if [ -f "$AGENT_PENDING" ]; then
+    LOCK_AGE=$(( $(date +%s) - $(stat -c %Y "$AGENT_PENDING") ))
     if [ "$LOCK_AGE" -gt "$LOCK_STALE_SECONDS" ]; then
       log "Stale .agent-pending lockfile (${LOCK_AGE}s old). Previous agent attempt likely failed. Re-waking."
-      rm -f "$SKILL_DIR/.agent-pending"
+      rm -f "$AGENT_PENDING"
       SHOULD_WAKE=true
     else
       log "Skipping agent wake: .agent-pending lockfile exists (${LOCK_AGE}s old, agent still processing)"
@@ -140,31 +142,18 @@ if [ "$NEW" -gt 0 ]; then
   fi
   if [ "$SHOULD_WAKE" = true ]; then
     log "Waking agent for $NEW new file(s), $UPDATED updated file(s)"
-    # Build manifest
-    NEW_JSON=$(build_manifest_array "new" "${NEW_FILES[@]}")
-    UPDATED_JSON="[]"
-    if [ "$UPDATED" -gt 0 ]; then
-      UPDATED_JSON=$(build_manifest_array "updated" "${UPDATED_FILES[@]}")
-    fi
     jq -n --argjson new "$NEW_JSON" --argjson updated "$UPDATED_JSON" \
-      '{"new": $new, "updated": $updated}' > "$SKILL_DIR/.agent-pending"
+      '{"new": $new, "updated": $updated}' > "$AGENT_PENDING"
     openclaw system event --text "supernote-sync: $NEW new file(s) downloaded to buffer, $UPDATED updated. Read .agent-pending for manifest." --mode now
     log "Agent wake triggered"
   fi
 else
-  # Clean up buffer if no new files (updated files already copied to their destinations)
-  find "$BUFFER_DIR" -type f -name "*.note" | while read -r f; do
-    FNAME=$(basename "$f")
-    # Only remove files that were updated (already copied to localPath)
-    if grep -q "$FNAME" "$SKILL_DIR/.updated-files-buffer" 2>/dev/null; then
-      rm -f "$f"
-    fi
-  done
-  # Remove updated files from buffer since they're already placed
-  for entry in "${UPDATED_FILES[@]}"; do
-    FNAME=$(echo "$entry" | cut -d'|' -f2)
-    rm -f "$BUFFER_DIR/$FNAME"
-  done
+  # Clean up updated files from buffer (already copied to destinations)
+  if [ "$UPDATED" -gt 0 ]; then
+    echo "$UPDATED_JSON" | jq -r '.[].name' | while IFS= read -r fname; do
+      rm -f "$BUFFER_DIR/$fname"
+    done
+  fi
 fi
 
 log "Sync complete. Updated: $UPDATED, New: $NEW"
