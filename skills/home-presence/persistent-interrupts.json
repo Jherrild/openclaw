@@ -8,5 +8,15 @@
     "instruction": "Only notify Jesten via Telegram if he is NOT home (person.jesten_herrild != 'home'). IMPORTANT: Before notifying, check the presence-log.jsonl to verify she has been away (not_home) for at least 30 consecutive minutes prior to this 'home' event. If she was home within the last 30 minutes, ignore this trigger.",
     "channel": "telegram",
     "created": "2026-02-09T01:30:14.114Z"
+  },
+  {
+    "id": "int-mleuhr3z-pzb3",
+    "entity_id": "magnus.voice_command",
+    "state": null,
+    "label": "Voice Command",
+    "message": "Voice Command: {{new_state}}",
+    "instruction": "Analyze the command. If it's a request to file something, use obsidian-scribe. If it's a task, use google-tasks. If it's a general question, answer it. Reply back to the main session ONLY if you have a response for Jesten.",
+    "channel": "default",
+    "created": "2026-02-09T07:23:02.399Z"
   }
 ]

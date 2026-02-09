@@ -312,6 +312,11 @@ function connect() {
           type: 'subscribe_events',
           event_type: 'state_changed',
         }));
+        ws.send(JSON.stringify({
+          id: nextId(),
+          type: 'subscribe_events',
+          event_type: 'magnus_voice_command',
+        }));
         startPingLoop();
         break;
 
@@ -323,6 +328,17 @@ function connect() {
         break;
 
       case 'event': {
+        // Handle custom voice command events
+        if (msg.event.event_type === 'magnus_voice_command') {
+          const data = msg.event.data;
+          const message = data && data.message ? data.message : '';
+          if (message) {
+            log('info', `[voice] Received voice command: "${message}"`);
+            interruptManager.evaluate('magnus.voice_command', null, message);
+          }
+          break;
+        }
+
         const data = msg.event && msg.event.data;
         if (!data || !data.entity_id) break;
 

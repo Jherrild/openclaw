@@ -43,9 +43,11 @@
           {% else %}
             {{ raw_message }}
           {% endif %}
-    - action: rest_command.post_magnus_message
+    - action: event.fire
       data:
-        message: "{{ clean_message }}"
+        event_type: magnus_voice_command
+        event_data:
+          message: "{{ clean_message }}"
     - action: persistent_notification.create
       data:
         title: "🦁 Magnus Voice Bridge"

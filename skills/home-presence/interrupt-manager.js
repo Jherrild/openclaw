@@ -110,13 +110,22 @@ class InterruptManager {
 
     const allMatched = [...matchedPersistent, ...matchedOneOff];
     for (const rule of allMatched) {
+      let msg = rule.message || `${rule.label || rule.id}: ${entityId} → ${newState}`;
+      // Interpolate placeholders
+      if (msg.includes('{{new_state}}')) {
+        msg = msg.replace(/{{new_state}}/g, newState);
+      }
+      if (msg.includes('{{entity_id}}')) {
+        msg = msg.replace(/{{entity_id}}/g, entityId);
+      }
+
       this._enqueue({
         id: rule.id,
         label: rule.label || rule.id,
         entity_id: entityId,
         old_state: oldState,
         new_state: newState,
-        message: rule.message || `${rule.label || rule.id}: ${entityId} → ${newState}`,
+        message: msg,
         instruction: rule.instruction || null,
         channel: rule.channel || 'default',
       });
