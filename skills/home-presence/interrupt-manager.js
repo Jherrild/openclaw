@@ -11,7 +11,6 @@ const { execFile } = require('child_process');
 const PERSISTENT_FILE = path.join(__dirname, 'persistent-interrupts.json');
 const ONEOFF_FILE = path.join(__dirname, 'one-off-interrupts.json');
 const CONFIG_FILE = path.join(__dirname, 'config.json');
-const STATUS_LOG = path.join(__dirname, 'ha-bridge.status.log');
 
 const BATCH_WINDOW_MS = 5000;
 const RATE_LIMIT_MAX = 4;
@@ -82,7 +81,8 @@ class InterruptManager {
   _statusLog(level, msg) {
     const ts = new Date().toISOString();
     const line = `[${ts}] [interrupt-mgr] [${level}] ${msg}\n`;
-    try { fs.appendFileSync(STATUS_LOG, line); } catch { /* ignore */ }
+    // Only write to console — ha-bridge redirects stdout to status log
+    // (Writing to file AND console causes duplicate entries)
     console[level === 'error' ? 'error' : 'log'](line.trim());
   }
 
@@ -202,7 +202,7 @@ class InterruptManager {
         if (b.instruction) s += ` [instruction: ${b.instruction}]`;
         return s;
       });
-      const text = `home-presence interrupt: ${summaries.join(' | ')} [instruction: use message tool to notify user on '${channel}']`;
+      const text = `home-presence interrupt: ${summaries.join(' | ')} [instruction: You MUST use the 'message' tool to notify the user on '${channel}'. Do not just reply with text.]`;
 
       this._statusLog('info', `Dispatching openclaw system event (channel: ${channel}): ${text}`);
 

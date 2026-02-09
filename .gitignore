@@ -10,4 +10,4 @@ skills/**/*json.bak
 skills/**/*jsonl.bak
 skills/**/*.log
 skills/**/*.log.bak
-skills/node_modules/*
+skills/**/node_modules/*
