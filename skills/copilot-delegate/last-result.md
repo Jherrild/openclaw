@@ -1,42 +1,31 @@
-# Interrupt Manager Refactor — Summary
+# Interrupt Manager — Dispatch Reliability Fix
 
-## Architectural Changes
+## Date: 2026-02-09
 
-### 1. Dual-Pipeline Architecture (`interrupt-manager.js`)
-The single shared batch queue has been split into **two independent pipelines**: `message` and `subagent`. Each pipeline has its own:
-- **Batch queue** — triggers accumulate in separate arrays
-- **Batch timer** — fires independently per pipeline
-- **Rate-limit timestamps** — rolling window tracked separately
-- **Circuit breaker** — one pipeline hitting its limit does not affect the other
+## Issues Fixed
 
-Previously, `message` type interrupts bypassed batching and rate limits entirely (immediate fire). Now they go through their own pipeline with a shorter batch window (2s default) and higher rate limit (10/min default), giving consistent protection against storms while keeping latency low.
+### 1. One-Off Interrupts Lost on Dispatch Failure
+**Problem:** One-off interrupts were removed from `one-off-interrupts.json` immediately upon matching, before dispatch. If the sub-agent spawn or message send failed, the trigger was permanently lost.
 
-### 2. Settings Externalized (`interrupt-settings.json`)
-All hard-coded constants (`BATCH_WINDOW_MS`, `RATE_LIMIT_MAX`, `RATE_LIMIT_WINDOW_MS`, `FILE_POLL_MS`, `LOG_LIMIT`) have been moved to `interrupt-settings.json`. The InterruptManager:
-- Loads settings at startup with fallback defaults
-- Hot-reloads the file on changes via `fs.watchFile`
-- Exposes `getSettings()` / `updateSettings(patch)` methods for programmatic access
+**Fix:** Introduced a `_pending` state. Matched one-offs are marked `_pending: true` (preventing re-triggering) but remain in the file. They are only removed (`_finalizeOneOffs`) after the entire batch dispatches successfully. On failure, `_restoreOneOffs` clears the `_pending` flag so the trigger can fire again on the next matching event.
 
-### 3. Configuration CLI (`register-interrupt.js`)
-Two new commands added:
-- `get-settings` — prints current pipeline settings as JSON
-- `set-settings '<json>'` — applies a JSON merge-patch to settings and writes to disk
+### 2. Invalid CLI Commands (`sessions spawn`, `sessions send`)
+**Problem:** The dispatch methods used non-existent `openclaw sessions spawn` and `openclaw sessions send` subcommands. The `sessions` command only lists sessions — it has no `spawn` or `send` subcommands. This caused every dispatch to exit with code 1.
 
-### 4. Message Delivery Fix
-**Root cause:** The `message` pipeline was using `openclaw agent --session-id <id> --message <text> --deliver`, which is not a valid openclaw CLI command. Messages never reached the main Telegram session.
+**Fix:**
+- **Subagent pipeline:** Changed from `openclaw sessions spawn --model gemini-flash-1.5 --prompt <p> --quiet` to `openclaw agent --local --message <prompt>`, which is the correct CLI for running a local embedded agent turn. Added a 120s timeout.
+- **Message pipeline:** Changed from `openclaw sessions send --session <id> --text <text>` to `openclaw message send --channel <channel> --message <text>`, which is the actual message delivery command.
 
-**Fix:** Changed to `openclaw sessions send --session <id> --text <text>`, which is the correct command used by sub-agents and the documented API for session message delivery.
+### 3. Session ID Resolution
+**Problem:** `_getMainSessionId` called `openclaw sessions list --kinds main --limit 1 --json`, which doesn't exist as a subcommand.
 
-### 5. Dispatch Log Fix
-The `_logDispatchResult` method referenced an undefined `LOG_FILE` variable. Fixed to construct the path inline (`dispatch.log` in the skill directory) and use `this.settings.log_limit` for trimming.
+**Fix:** Changed to `openclaw sessions --json` (the actual command) and parses the output to find the session with `key === 'agent:main:main'`. Returns `null` if not found (with a warning log), so callers can fall back gracefully.
+
+### 4. Improved Error Logging
+- All dispatch methods now log the exact command being run and stderr output on failure.
+- Subagent dispatch logs whether the process was killed (timeout/signal).
+- One-off lifecycle transitions are logged (pending → consumed / pending → restored).
 
 ## Files Modified
-- `skills/home-presence/interrupt-manager.js` — core refactor (dual pipelines, settings, delivery fix)
-- `skills/home-presence/register-interrupt.js` — added get-settings/set-settings commands
-- `skills/home-presence/interrupt-settings.json` — **new** configuration file
-- `skills/home-presence/SKILL.md` — updated documentation for new architecture
+- `skills/home-presence/interrupt-manager.js` — all fixes above
 - `skills/copilot-delegate/last-result.md` — this summary
-
-## Files NOT Modified (no changes needed)
-- `ha-bridge.js` — only creates InterruptManager and calls `evaluate()`; interface unchanged
-- `manage-channel.js` — channel management is orthogonal to pipeline settings

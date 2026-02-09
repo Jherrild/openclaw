@@ -149,19 +149,24 @@ class InterruptManager {
   // ── Session Resolution & Logging ──────────────────────────────────────────
 
   _getMainSessionId(callback) {
-    execFile(OPENCLAW_BIN, ['sessions', 'list', '--kinds', 'main', '--limit', '1', '--json'], (err, stdout, stderr) => {
-      let sessionId = 'main';
+    execFile(OPENCLAW_BIN, ['sessions', '--json'], (err, stdout, stderr) => {
+      let sessionId = null;
       if (!err && stdout) {
         try {
           const data = JSON.parse(stdout);
-          if (data.sessions && data.sessions.length > 0 && data.sessions[0].sessionId) {
-            sessionId = data.sessions[0].sessionId;
+          // Find the main agent session (key: "agent:main:main")
+          const mainSession = (data.sessions || []).find(s => s.key === 'agent:main:main');
+          if (mainSession && mainSession.sessionId) {
+            sessionId = mainSession.sessionId;
           }
         } catch (e) {
           this._statusLog('warn', `Failed to parse sessions list: ${e.message}`);
         }
       } else if (err) {
         this._statusLog('warn', `Failed to list sessions: ${err.message}`);
+      }
+      if (!sessionId) {
+        this._statusLog('warn', `Could not resolve main session ID; falling back to agent routing`);
       }
       callback(sessionId);
     });
@@ -194,6 +199,28 @@ class InterruptManager {
     }
   }
 
+  // ── One-Off Lifecycle ─────────────────────────────────────────────────────
+
+  /** Remove successfully dispatched one-off triggers. */
+  _finalizeOneOffs(triggers) {
+    const ids = triggers.filter(t => t._oneOff).map(t => t.id);
+    if (ids.length === 0) return;
+    this.oneOff = this.oneOff.filter(r => !ids.includes(r.id));
+    this._writeJson(ONEOFF_FILE, this.oneOff);
+    this._statusLog('info', `Consumed ${ids.length} one-off interrupt(s) after successful dispatch: ${ids.join(', ')}`);
+  }
+
+  /** Restore pending one-offs so they can re-trigger after a failed dispatch. */
+  _restoreOneOffs(triggers) {
+    const ids = triggers.filter(t => t._oneOff).map(t => t.id);
+    if (ids.length === 0) return;
+    for (const r of this.oneOff) {
+      if (ids.includes(r.id)) delete r._pending;
+    }
+    this._writeJson(ONEOFF_FILE, this.oneOff);
+    this._statusLog('warn', `Restored ${ids.length} one-off interrupt(s) after failed dispatch: ${ids.join(', ')}`);
+  }
+
   // ── Matching ──────────────────────────────────────────────────────────────
 
   /**
@@ -208,12 +235,15 @@ class InterruptManager {
 
     if (matchedPersistent.length === 0 && matchedOneOff.length === 0) return;
 
-    // Queue one-off removals immediately
+    // Mark matched one-offs as pending (prevents re-triggering) instead of
+    // removing immediately — they are only deleted after successful dispatch.
     if (matchedOneOff.length > 0) {
       const matchedIds = new Set(matchedOneOff.map(r => r.id));
-      this.oneOff = this.oneOff.filter(r => !matchedIds.has(r.id));
+      for (const r of this.oneOff) {
+        if (matchedIds.has(r.id)) r._pending = true;
+      }
       this._writeJson(ONEOFF_FILE, this.oneOff);
-      this._statusLog('info', `Consumed ${matchedOneOff.length} one-off interrupt(s): ${[...matchedIds].join(', ')}`);
+      this._statusLog('info', `Marked ${matchedOneOff.length} one-off interrupt(s) as pending: ${[...matchedIds].join(', ')}`);
     }
 
     const allMatched = [...matchedPersistent, ...matchedOneOff];
@@ -238,12 +268,15 @@ class InterruptManager {
         channel: rule.channel || 'default',
         session_id: rule.session_id || 'main',
         type: rule.type || 'subagent',
+        _oneOff: matchedOneOff.includes(rule),
       });
     }
   }
 
   _matches(rule, entityId, newState) {
     if (!rule || !rule.entity_id) return false;
+    // Skip rules already pending dispatch (one-off safety)
+    if (rule._pending) return false;
     // Support exact match or glob-style wildcard (e.g. 'light.*')
     const pattern = rule.entity_id;
     if (pattern.includes('*')) {
@@ -311,25 +344,44 @@ class InterruptManager {
   }
 
   // ── Dispatch: Message Pipeline ──────────────────────────────────────────────
-  // Sends messages directly to the target session via `openclaw sessions send`.
+  // Sends messages via `openclaw agent` routed to the main session.
 
   _dispatchMessages(batch) {
     this._statusLog('info', `[message] Dispatching ${batch.length} message interrupt(s)`);
+    const config = this._readConfig();
+    const channel = config.default_channel || 'telegram';
 
     this._getMainSessionId((mainSessionId) => {
+      let pending = batch.length;
+      let anyFailed = false;
+
       for (const t of batch) {
         const text = t.message || `${t.label}: ${t.new_state}`;
-        const targetSession = (!t.session_id || t.session_id === 'main') ? mainSessionId : t.session_id;
+        const args = ['message', 'send', '--channel', channel, '--message', text];
+        if (mainSessionId) {
+          // Route through agent session so context is preserved
+          args.push('--target', mainSessionId);
+        }
 
-        const args = ['sessions', 'send', '--session', targetSession, '--text', text];
-
+        this._statusLog('info', `[message] Sending: openclaw ${args.join(' ')}`);
         execFile(OPENCLAW_BIN, args, (err, stdout, stderr) => {
           this._logDispatchResult(args, stdout, stderr);
 
           if (err) {
+            anyFailed = true;
             this._statusLog('error', `[message] Failed to send for '${t.label}': ${err.message}`);
+            if (stderr) this._statusLog('error', `[message]   stderr: ${stderr.trim()}`);
           } else {
-            this._statusLog('info', `[message] Sent direct message for '${t.label}' → session ${targetSession}`);
+            this._statusLog('info', `[message] Sent message for '${t.label}'`);
+          }
+
+          pending--;
+          if (pending === 0) {
+            if (anyFailed) {
+              this._restoreOneOffs(batch);
+            } else {
+              this._finalizeOneOffs(batch);
+            }
           }
         });
       }
@@ -353,8 +405,12 @@ class InterruptManager {
       byGroup[key].push(b);
     }
 
+    const groupKeys = Object.keys(byGroup);
+    let groupsPending = groupKeys.length;
+    let anyFailed = false;
+
     for (const [key, triggers] of Object.entries(byGroup)) {
-      const [channel, sessionId] = key.split('::');
+      const [channel] = key.split('::');
       const summaries = triggers.map(b => {
         let s = b.message;
         if (b.instruction) s += ` [instruction: ${b.instruction}]`;
@@ -372,8 +428,7 @@ YOUR GOAL:
 3. DECIDE: Does the user need to be notified?
 
 IF NOTIFICATION IS NEEDED:
-- Send a message to the session '${sessionId}' using: openclaw sessions send --session ${sessionId} --text "Your message here"
-- Use the provided channel: '${channel}' (mention this in your message if relevant, or format accordingly).
+- Send a message using: openclaw message send --channel ${channel} --message "Your message here"
 
 IF NO NOTIFICATION IS NEEDED:
 - Exit silently.
@@ -383,19 +438,33 @@ CRITICAL:
 - Only notify if the condition is truly met and important.
 - Do NOT simply echo the interrupt; add value or verify context.`;
 
-      this._statusLog('info', `[subagent] Spawning sub-agent for interrupt(s) on channel: ${channel}, session: ${sessionId}`);
+      const args = [
+        'agent', '--local',
+        '--message', prompt,
+      ];
 
-      execFile(OPENCLAW_BIN, [
-        'sessions', 'spawn',
-        '--model', 'gemini-flash-1.5',
-        '--prompt', prompt,
-        '--quiet'
-      ], (err, stdout, stderr) => {
+      this._statusLog('info', `[subagent] Spawning sub-agent for interrupt(s) on channel: ${channel}`);
+      this._statusLog('info', `[subagent] Command: openclaw ${args.slice(0, 3).join(' ')} --message <prompt>`);
+
+      execFile(OPENCLAW_BIN, args, { timeout: 120000 }, (err, stdout, stderr) => {
+        this._logDispatchResult(args.slice(0, 3), stdout, stderr);
+
         if (err) {
+          anyFailed = true;
           this._statusLog('error', `[subagent] Failed to spawn sub-agent: ${err.message}`);
-          if (stderr) this._statusLog('error', `  stderr: ${stderr.trim()}`);
+          if (stderr) this._statusLog('error', `[subagent]   stderr: ${stderr.trim()}`);
+          if (err.killed) this._statusLog('error', `[subagent]   Process was killed (timeout or signal)`);
         } else {
-          this._statusLog('info', `[subagent] Sub-agent spawned successfully (${triggers.length} interrupt(s))`);
+          this._statusLog('info', `[subagent] Sub-agent completed successfully (${triggers.length} interrupt(s))`);
+        }
+
+        groupsPending--;
+        if (groupsPending === 0) {
+          if (anyFailed) {
+            this._restoreOneOffs(batch);
+          } else {
+            this._finalizeOneOffs(batch);
+          }
         }
       });
     }
