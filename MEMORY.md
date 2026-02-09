@@ -13,19 +13,35 @@
   - **Fallback Protocol:** If an MCP tool fails or is unreachable, **ASK** before falling back to whatever custom skill, processes, or legacy/custom tools you might use to accomplish the same thing (filesystem tools).
   - **Exception:** The MCP for obsidian is IN PROGRESS, it doesn't work well right now. For now, continue using obsidian-scribe as the primary skill for obsidian interaction, and let the user know that you aren't using the obsidian MCP until we get around to fixing it.
 
-- **Coding Policy:**
-  - **Delegate Default:** ALL hard coding, refactoring, and PRD tasks go to **Claude Opus 4.5** via the `copilot` CLI. Do not attempt them in Main Session or via `sessions_spawn`.
-
 - **Skill Creation Protocol (Strict):**
   1.  **Magnus (You):** Create the skill directory (`skills/<name>`).
   2.  **Magnus (You):** Draft a **PRD** in that directory (`skills/<name>/PRD.md`) based on the discussion.
-  3.  **Delegate:** Execute `copilot -p "Read PRD.md and implement..." --model claude-opus-4.5 --allow-all` to generate all code/scripts.
+  3.  **Delegate:** Execute `copilot-lock.sh -p "Read PRD.md and implement..." --model claude-opus-4.6 --allow-all` via the `copilot-delegate` skill.
   4.  **Never** write skill scripts manually in the Main Session unless those delegations to copilot fail, in which case you should ASK the user if they'd like you to write it yourself in the main session.
 
 - **Skill Update Protocol (Strict):**
   1.  **Magnus (You):** Create a **New PRD** for the update (e.g., `skills/<name>/PRD-v[NUMBER].md` or `PRD-feature-[FEATURE NAME].md`). **DO NOT** overwrite an existing PRD unless you're updating it in conversation with the user.
-  2.  **Delegate:** Execute `copilot -p "Read PRD-v2.md and refactor/update the skill..." --model claude-opus-4.5 --allow-all`.
+  2.  **Delegate:** Execute `copilot-lock.sh -p "Read PRD-v2.md and refactor/update the skill..." --model claude-opus-4.6 --allow-all` via the `copilot-delegate` skill.
   3.  **Constraint:** Never attempt to refactor skill code manually. Delegated agents must handle implementation unless those delegations to copilot fail, in which case you should ASK the user if they'd like you to write it yourself in the main session.
+
+## Core Skill Reference (Workspace)
+**IMPORTANT** If you discover a new skill that was added by you, copilot, or Jesten, and it's not in this mapping, UPDATE IT. This will help you pick the right tool and avoid mistakes.
+
+| Skill | Purpose | Key Tools / CLI | Use When... |
+|-------|---------|-----------------|-------------|
+| `copilot-delegate` | **MANDATORY** Coding Agent | `copilot-lock.sh` | Writing, refactoring, or debugging ANY code. **Never code manually.** |
+| `obsidian-scribe` | Authoritative PARA Filing | `scribe_save`, `scribe_append`, `scribe_move` | **MANDATORY** for all Obsidian work. **Never** use generic `exec`, `write`, or `edit` on the vault. |
+| `local-rag` | Semantic Vault Search | `rag.js search`, `rag.js query` | Researching existing notes or concepts in Obsidian. Use with `grep`. |
+| `home-presence` | Home Awareness & TTS | `presence.js locate`, `presence.js follow-and-speak` | Checking who is home, speaking through speakers, or managing HA interrupts. |
+| `google-tasks` | Task Management | `tasks.js add`, `tasks.js list` | Managing Jesten's "Personal" and "Work" Google Task lists. |
+| `task-orchestrator` | Systemd Task Scheduler | `orchestrator.js add/list/logs` | Scheduling background scripts (like Supernote sync) as systemd timers. |
+| `supernote-sync` | Supernote -> Obsidian | `check-and-sync.sh` | Syncing `.note` files from Google Drive to the Obsidian PARA vault. **Mapping:** `skills/supernote-sync/sync-mapping.json`. |
+| `expert-check` | High-IQ Reasoning | `sessions_spawn` (Gemini Pro) | Double-checking complex logic, analysis, or architecture decisions. |
+| `google-docs` | Doc Management | `docs.js search/create/append` | Managing content in Google Documents (Drive). |
+
+- **Search Protocol:** Always use `local-rag` and `memory_search` before creating new notes or answering history questions.
+- **Filing Rule:** Financial documents (bills/taxes) ALWAYS go to `2-Areas/Finance/` regardless of subject.
+- **Privacy:** Treat all home sensor data and personal notes as strictly private.
 
 - **Note Creation:**
   - **Autonomous Filing:** Do NOT ask for confirmation before creating new notes. If confident, just do it.
