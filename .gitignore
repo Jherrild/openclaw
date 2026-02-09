@@ -11,3 +11,4 @@ skills/**/*jsonl.bak
 skills/**/*.log
 skills/**/*.log.bak
 skills/**/node_modules/*
+images/*

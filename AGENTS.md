@@ -31,24 +31,19 @@ Before executing any task that involves **Reading**, **Summarizing**, **Searchin
 ## 💻 Coding Policy (Strict)
 
 **The Rule:**
-You MUST NOT perform coding, large refactors, or complex technical documentation (PRDs) directly in the Main Session. You need to utilize the `copilot-delegate` skill. It will save you tokens, and produce better results.
+You MUST NOT perform coding, large refactors, or complex technical documentation (PRDs) directly in the Main Session. You must **ALWAYS** utilize the `copilot-delegate` skill. It will save you tokens, and produce better results.
 
 **Trigger:**
 - Any request to "write code", "implement this feature", "generate a PRD", or "fix this bug".
 - Any request to **Create OR Update a Skill**.
 
 **Action:**
-1.  **Stop:** Do not write the code yourself. Always use the `copilot-delegate` skill to handle coding tasks. ALL coding, refactoring, and PRD tasks should be implemented with the `copilot-delegate` skill. No exceptions. Do not attempt them in Main Session or via `sessions_spawn`.
-    *   Always use the `copilot-lock.sh` wrapper (located in `skills/copilot-delegate/`) for every delegation to ensure concurrency safety and proper logging.
-2.  **Protocol (New Skill):**
-    *   Create directory: `mkdir skills/<name>`
-    *   Write PRD (Optional): `write skills/<name>/PRD.md` (Capture requirements)
-    *   Delegate: `copilot -p "Implement skills/<name> based on PRD.md" ...`
-3.  **Protocol (Update Skill):**
-    *   Write New PRD: `write skills/<name>/PRD-update-XYZ.md` (Do NOT overwrite old PRD).
-    *   Delegate: `copilot -p "Refactor skills/<name> based on PRD-update-XYZ.md" ...`
-4.  **Protocol (General Code):**
-    *   Delegate: Use the `copilot-delegate` skill. Read the `SKILL.md` in `skills/copilot-delegate/`
+1.  **Stop:** 
+    *   Do not write the code yourself. Always use the `copilot-delegate` skill to handle coding tasks. ALL coding, refactoring, and PRD tasks should be implemented with the `copilot-delegate` skill. No exceptions. Do not attempt them in Main Session or via `sessions_spawn`.
+    *   Copilot-lock: Always use the `copilot-lock.sh` wrapper (located in `skills/copilot-delegate/`) for every delegation to ensure concurrency safety and proper logging.
+    *   Auto-Commit: Always include the summary and auto-commit directives in the delegation prompt.
+2.  **Protocol (Delegate):**
+    *   Delegate: Use the `copilot-delegate` skill in `skills/copilot-delegate/` to instruct copilot
 
 **Why?**
 - Keeps Main Session lightweight.
