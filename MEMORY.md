@@ -35,8 +35,15 @@
   - **Missed Items:** Assume all sent documents need filing. Missing one is a failure.
   - **Sub-agents:** ALWAYS delegate document analysis/OCR to a sub-agent ("Silent Document Trigger").
 
-- **Home Presence & Speech Routing:**
-  - **Presence Detection:** Use Everything Presence Lite (mmWave) and CO2 fallback (via `home-presence` skill).
+- **Home Presence & Status Awareness:**
+  - **Presence Detection:** Uses Everything Presence Lite (mmWave) and CO2 fallback via the `home-presence` skill.
+  - **HA Bridge:** A persistent `systemd` user service (`ha-bridge.service`) maintains an outbound WebSocket connection to Home Assistant.
+  - **Passive Logging:** All presence events (occupancy, motion, person status) are logged to `skills/home-presence/presence-log.jsonl` (rolling 5,000 lines).
+  - **Capabilities:**
+    - **Primary Home Resource:** This log is the authoritative source for the recent state of the home. Magnus should check it first for any questions regarding home status, movement, or sensor history.
+    - **Context Awareness:** Magnus can query the JSONL log to answer questions about recent movement or state changes without waking for every event.
+    - **Selective Wake:** The bridge supports a `WAKE_ON_ENTITIES` list for high-priority alerts (currently empty).
+    - **Speech:** Can speak through local speakers using Google AI TTS (Alnilam voice).
   - **Limited Coverage:** Presence detection is NOT house-wide.
   - **High Priority/Important:** Use "Home Group" (broadcast to all) to ensure delivery.
   - **Low/Medium Priority:** If no mmWave presence is detected, default to "Living Room".
