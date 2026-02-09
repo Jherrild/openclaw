@@ -76,7 +76,7 @@ If the task succeeded and you created or modified any files, auto-commit your ch
 2. From those, git add ONLY the files you created or modified during this task — do NOT stage unrelated changes.
 3. Run git commit -m '<type>(<scope>): <description>' with a concise, descriptive message summarizing the work (e.g., 'feat(supernote-sync): add pagination to Drive API calls').
 4. Skip the commit if the task failed or no files were changed." \
-  --model claude-opus-4.6 \
+  --model <model_name> \
   --allow-all \
   --share "skills/copilot-delegate/sessions/$(date +%s).md"
 
@@ -89,7 +89,7 @@ ls -t ~/.copilot/session-state/ | head -1 > skills/<SKILL_NAME>/.copilot-session
 cd ~/.openclaw/workspace
 LOCK_WRAPPER="skills/copilot-delegate/copilot-lock.sh"
 SESSION_ID=$(cat skills/<SKILL_NAME>/.copilot-session)
-bash "$LOCK_WRAPPER" --resume "$SESSION_ID" --model claude-opus-4.6 --allow-all
+bash "$LOCK_WRAPPER" --resume "$SESSION_ID" --model <model_name> --allow-all
 ```
 
 Replace `<SKILL_NAME>` with the skill you're working on (e.g., `supernote-sync`).
@@ -139,7 +139,7 @@ cd ~/repos/my-project
 
 Copilot uses the working directory to discover project files, `copilot-instructions.md`, and `.git` context. Start in the right place.
 
-**If the task relates to OpenClaw** (integrates with OpenClaw, uses its tools, or should follow its conventions), add the workspace as an extra directory and tell Copilot to read the instructions:
+**If the task relates to OpenClaw, but is in an external repo** (integrates with OpenClaw, uses its tools, or should follow its conventions), add the workspace as an extra directory and tell Copilot to read the instructions:
 
 ```bash
 LOCK_WRAPPER="$HOME/.openclaw/workspace/skills/copilot-delegate/copilot-lock.sh"
@@ -152,7 +152,7 @@ If the task succeeded and you created or modified any files, auto-commit your ch
 2. From those, git add ONLY the files you created or modified during this task — do NOT stage unrelated changes.
 3. Run git commit -m '<type>(<scope>): <description>' with a concise, descriptive message.
 4. Skip the commit if the task failed or no files were changed." \
-  --model claude-opus-4.6 \
+  --model <model_name> \
   --allow-all \
   --add-dir ~/.openclaw/workspace \
   --share "$HOME/.openclaw/workspace/skills/copilot-delegate/sessions/$(date +%s).md"
@@ -213,7 +213,7 @@ copilot --help 2>&1 | grep -A10 '\-\-model'
 
 **Override model:**
 ```bash
-bash "$LOCK_WRAPPER" -p "..." --model claude-sonnet-4.5 --allow-all --share "..."
+bash "$LOCK_WRAPPER" -p "..." --model <model_name> --allow-all --share "..."
 ```
 
 ### 4. Handle Additional Paths
@@ -222,9 +222,9 @@ If the task involves files outside the working directory, add explicit directory
 
 ```bash
 bash "$LOCK_WRAPPER" -p "..." \
-  --model claude-opus-4.6 \
+  --model <model_name> \
   --allow-all \
-  --add-dir /path/to/other/directory \
+  --add-dir </path/to/other/directory> \
   --share "$HOME/.openclaw/workspace/skills/copilot-delegate/sessions/$(date +%s).md"
 ```
 
@@ -309,7 +309,7 @@ git commit -m "<type>(<scope>): <description>"
 1. **One at a time — enforced by `copilot-lock.sh`.** Never call `copilot` directly. Always use the lock wrapper:
    ```bash
    LOCK_WRAPPER="$HOME/.openclaw/workspace/skills/copilot-delegate/copilot-lock.sh"
-   bash "$LOCK_WRAPPER" -p "..." --model claude-opus-4.6 --allow-all
+   bash "$LOCK_WRAPPER" -p "..." --model <model_name> --allow-all
    ```
    The wrapper automatically acquires a mutex lock, waits with exponential backoff if another instance is running, detects stale locks, and guarantees cleanup on exit/error/signal. No manual `pgrep` checks needed.
 
