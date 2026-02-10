@@ -62,15 +62,37 @@ Agents are bad at: managing OAuth tokens, hitting external APIs, long-running do
 
 **Lesson:** Handle all external IO (API calls, downloads, auth) in bash/Node.js scripts that run via cron. Let the agent work with **local files only**. The `supernote-sync` skill learned this the hard way — Magnus couldn't authenticate to Google Drive, so we moved all downloads into the cron script and gave Magnus pre-downloaded files in a `buffer/` directory.
 
-### 4. System Events Are the Wake Mechanism
+### 4. Interrupts Are the Wake Mechanism
+
+The **interrupt-service** is the centralized way to wake the agent. Scripts should NOT call `openclaw system event` directly.
+
+**For scripts managed by task-orchestrator:** Just `echo` your findings to stdout and exit 0. Register the task with `--interrupt` or `--interrupt-file` and the orchestrator wrapper handles the rest.
 
 ```bash
-openclaw system event --text "your-skill: description of what happened" --mode now
+# Register a task that fires interrupts automatically
+orchestrator.js add my-monitor ./check.sh --interval=10m \
+  --interrupt="alert: Check results and notify user if important."
 ```
 
-This injects a system message into the agent's session, triggering a turn. The agent sees the text as a `System:` prefixed user message. Use a consistent prefix (e.g., `supernote-sync:`) so the agent can pattern-match which skill to invoke.
+**For standalone collectors (like ha-bridge):** POST events to the interrupt-service HTTP API:
 
-**Lesson:** Keep event text concise but actionable. Include a pointer to where the agent should look (e.g., "read .agent-pending for manifest") rather than embedding large payloads in the event text itself.
+```bash
+node skills/interrupt-service/interrupt-cli.js trigger \
+  --source my-source --data '{"key":"value"}' --level alert
+```
+
+**For Magnus (ad-hoc watches):** Register interrupt rules directly:
+
+```bash
+node skills/interrupt-service/interrupt-cli.js add \
+  --source ha.state_change \
+  --condition '{"entity_id":"person.jesten","state":"home"}' \
+  --label "Jesten arrived" --one-off
+```
+
+See [interrupt-service SKILL.md](skills/interrupt-service/SKILL.md) and [task-orchestrator SKILL.md](skills/task-orchestrator/SKILL.md) for full docs.
+
+**Lesson:** Keep script output concise but actionable. Include a pointer to where the agent should look (e.g., "read .agent-pending for manifest") rather than embedding large payloads.
 
 ### 5. Cron Jobs Have Specific Config
 

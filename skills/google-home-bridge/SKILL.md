@@ -32,11 +32,13 @@ Create an applet:
   - Body: `{"message": "{{TextField}}"}`
 
 ### 3. OpenClaw Configuration
-Ensure `magnus.voice_command` is registered as a persistent interrupt:
+Ensure `magnus.voice_command` is registered as a persistent interrupt in the interrupt-service:
 ```bash
-node skills/home-presence/register-interrupt.js persistent magnus.voice_command \
-  --label "Voice Command" \
-  --message "Voice Command: {{new_state}}" \
-  --instruction "Analyze the command. If it's a request to file something, use obsidian-scribe. If it's a task, use google-tasks. If it's a general question, answer it." \
+node skills/interrupt-service/interrupt-cli.js add \
+  --source ha.state_change \
+  --condition '{"entity_id":"magnus.voice_command"}' \
+  --action message \
+  --message "{{new_state}}" \
+  --label "🦁 Voice" \
   --skip-validation
 ```
