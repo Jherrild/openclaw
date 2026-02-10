@@ -2,9 +2,7 @@
 Description=Timer for OpenClaw Task: {{TASK_NAME}}
 
 [Timer]
-OnBootSec=5min
-OnUnitActiveSec={{INTERVAL}}
-Persistent=true
+{{TIMER_DIRECTIVES}}
 
 [Install]
 WantedBy=timers.target

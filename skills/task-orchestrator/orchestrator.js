@@ -79,6 +79,35 @@ function parseInterval(interval) {
   return clean; // Let systemd handle it
 }
 
+function intervalToCalendar(interval) {
+  // Convert simple intervals to OnCalendar syntax for wall-clock scheduling.
+  // OnCalendar is more durable than OnUnitActiveSec (doesn't stall on restart).
+  const match = interval.match(/^(\d+)([smhd])$/);
+  if (!match) return null;
+
+  const num = parseInt(match[1]);
+  const unit = match[2];
+
+  if (unit === 'm' && num > 0 && num <= 60 && 60 % num === 0) {
+    return `*:0/${num}`;
+  }
+  if (unit === 'h' && num > 0 && num <= 24 && 24 % num === 0) {
+    if (num === 1) return 'hourly';
+    return `*-*-* 0/${num}:00:00`;
+  }
+  return null;
+}
+
+function buildTimerDirectives(interval) {
+  const calendarExpr = intervalToCalendar(interval);
+  if (calendarExpr) {
+    return `OnCalendar=${calendarExpr}\nPersistent=true`;
+  }
+  // Fallback: OnUnitActiveSec with OnActiveSec=1s safety kickstarter
+  // OnActiveSec fires 1s after timer activation, preventing stalls on restart
+  return `OnBootSec=5min\nOnActiveSec=1s\nOnUnitActiveSec=${interval}\nPersistent=true`;
+}
+
 // ── Template Processing ────────────────────────────────────────────────────────
 
 function loadTemplate(name) {
@@ -208,7 +237,7 @@ Options:
 
   const timerContent = renderTemplate(loadTemplate('task.timer.template'), {
     TASK_NAME: taskName,
-    INTERVAL: interval,
+    TIMER_DIRECTIVES: buildTimerDirectives(interval),
   });
 
   // Write unit files
