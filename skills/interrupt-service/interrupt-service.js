@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// interrupt-service.js — Unified Interrupt Service Daemon (Phase 1)
+// interrupt-service.js — Unified Interrupt Service Daemon (Phase 2)
 //
 // A source-agnostic daemon that receives events from collectors (HA Bridge,
 // Mail Sentinel, etc.) via a local HTTP API, matches them against configured
@@ -11,9 +11,7 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const { execFile } = require('child_process');
-
-const { execFileSync } = require('child_process');
+const { execFile, execFileSync } = require('child_process');
 
 const SKILL_DIR = __dirname;
 const RULES_FILE = path.join(SKILL_DIR, 'interrupt-rules.json');
@@ -28,7 +26,13 @@ const DEFAULT_SETTINGS = {
   message:  { batch_window_ms: 2000, rate_limit_max: 10, rate_limit_window_ms: 60000 },
   subagent: { batch_window_ms: 5000, rate_limit_max: 4,  rate_limit_window_ms: 60000 },
   log_limit: 1000,
+  file_poll_ms: 2000,
+  default_channel: 'telegram',
 };
+
+// ── In-memory rules cache (for _pending flag tracking) ──────────────────────
+
+let rulesCache = null;
 
 // ── Utility ─────────────────────────────────────────────────────────────────
 
@@ -71,8 +75,32 @@ function loadSettings() {
     message:  { ...DEFAULT_SETTINGS.message,  ...raw.message },
     subagent: { ...DEFAULT_SETTINGS.subagent, ...raw.subagent },
     log_limit: raw.log_limit ?? DEFAULT_SETTINGS.log_limit,
+    file_poll_ms: raw.file_poll_ms ?? DEFAULT_SETTINGS.file_poll_ms,
+    default_channel: raw.default_channel ?? DEFAULT_SETTINGS.default_channel,
     validators: raw.validators || {},
   };
+}
+
+function saveSettings(settings) {
+  try {
+    if (fs.existsSync(SETTINGS_FILE)) {
+      fs.copyFileSync(SETTINGS_FILE, SETTINGS_FILE + '.bak');
+    }
+    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2) + '\n');
+    log('info', 'Settings saved to disk');
+  } catch (err) {
+    log('error', `Failed to save settings: ${err.message}`);
+    throw err;
+  }
+}
+
+// ── Channel Resolution ──────────────────────────────────────────────────────
+
+function resolveChannel(channel) {
+  if (!channel || channel === 'default') {
+    return loadSettings().default_channel;
+  }
+  return channel;
 }
 
 // ── Rule Validation ─────────────────────────────────────────────────────────
@@ -113,14 +141,66 @@ function validateRule(rule) {
 }
 
 function saveRules(rules) {
-  fs.writeFileSync(RULES_FILE, JSON.stringify(rules, null, 2) + '\n');
+  // Strip transient _pending flag before persisting
+  const clean = rules.map(r => {
+    const { _pending, ...rest } = r;
+    return rest;
+  });
+  fs.writeFileSync(RULES_FILE, JSON.stringify(clean, null, 2) + '\n');
 }
 
 // ── Rules ───────────────────────────────────────────────────────────────────
 
 function loadRules() {
   const rules = readJson(RULES_FILE, []);
-  return Array.isArray(rules) ? rules.filter(r => r.enabled !== false) : [];
+  rulesCache = Array.isArray(rules) ? rules : [];
+  return rulesCache.filter(r => r.enabled !== false && r._pending !== true);
+}
+
+function loadAllRules() {
+  const rules = readJson(RULES_FILE, []);
+  rulesCache = Array.isArray(rules) ? rules : [];
+  return rulesCache;
+}
+
+// ── One-Off Lifecycle ───────────────────────────────────────────────────────
+
+function markOneOffsPending(matchedRules) {
+  for (const rule of matchedRules) {
+    if (rule.one_off) {
+      rule._pending = true;
+    }
+  }
+}
+
+function finalizeOneOffs(batch) {
+  const oneOffIds = new Set(
+    batch.filter(t => t.one_off).map(t => t.id)
+  );
+  if (oneOffIds.size === 0) return;
+
+  const allRules = readJson(RULES_FILE, []);
+  const filtered = allRules.filter(r => !oneOffIds.has(r.id));
+  if (filtered.length !== allRules.length) {
+    saveRules(filtered);
+    log('info', `[one-off] Removed ${oneOffIds.size} completed one-off rule(s): ${[...oneOffIds].join(', ')}`);
+  }
+}
+
+function restoreOneOffs(batch) {
+  const oneOffIds = new Set(
+    batch.filter(t => t.one_off).map(t => t.id)
+  );
+  if (oneOffIds.size === 0) return;
+
+  if (rulesCache) {
+    for (const rule of rulesCache) {
+      if (oneOffIds.has(rule.id)) {
+        delete rule._pending;
+      }
+    }
+  }
+  log('info', `[one-off] Restored ${oneOffIds.size} one-off rule(s) after dispatch failure: ${[...oneOffIds].join(', ')}`);
 }
 
 // ── Pluggable Matchers ──────────────────────────────────────────────────────
@@ -142,6 +222,7 @@ function matchCondition(condition, eventData) {
 }
 
 function matchRule(rule, source, eventData) {
+  if (rule._pending === true) return false;
   if (rule.source && rule.source !== source) return false;
   return matchCondition(rule.condition, eventData);
 }
@@ -187,6 +268,7 @@ function flushPipeline(type) {
       log('warn', `[${type}] CIRCUIT BREAKER OPEN — rate limit exceeded (${cfg.rate_limit_max}/${cfg.rate_limit_window_ms}ms)`);
     }
     log('warn', `[${type}] Dropped batch of ${batch.length}: ${batch.map(b => b.label).join(', ')}`);
+    restoreOneOffs(batch);
     return;
   }
 
@@ -209,6 +291,20 @@ function flushPipeline(type) {
 function dispatchMessages(batch) {
   log('info', `[message] Dispatching ${batch.length} interrupt(s) via system event`);
 
+  let pending = batch.length;
+  let anyFailed = false;
+
+  const onComplete = () => {
+    pending--;
+    if (pending <= 0) {
+      if (anyFailed) {
+        restoreOneOffs(batch);
+      } else {
+        finalizeOneOffs(batch);
+      }
+    }
+  };
+
   for (const t of batch) {
     const text = t.message || `${t.label}: ${JSON.stringify(t.data)}`;
     const args = ['system', 'event', '--text', text, '--mode', 'now'];
@@ -220,9 +316,11 @@ function dispatchMessages(batch) {
 
       if (err) {
         log('error', `[message] Failed for '${t.label}': ${err.message}`);
+        anyFailed = true;
       } else {
         log('info', `[message] Delivered: ${t.label}`);
       }
+      onComplete();
     });
   }
 }
@@ -232,43 +330,76 @@ function dispatchMessages(batch) {
 function dispatchSubagents(batch) {
   log('info', `[subagent] Dispatching ${batch.length} interrupt(s) via sub-agent`);
 
-  const summaries = batch.map(b => {
-    let s = b.message || `${b.label}: ${JSON.stringify(b.data)}`;
-    if (b.instruction) s += ` [instruction: ${b.instruction}]`;
-    return s;
-  });
+  // Group by resolvedChannel::session_id
+  const groups = {};
+  for (const t of batch) {
+    const resolved = resolveChannel(t.channel);
+    const session = t.session_id || 'main';
+    const key = `${resolved}::${session}`;
+    if (!groups[key]) groups[key] = { channel: resolved, session_id: session, triggers: [] };
+    groups[key].triggers.push(t);
+  }
 
-  const channel = batch[0].channel || 'telegram';
-  const prompt = `You are an interrupt analysis sub-agent.
+  const groupKeys = Object.keys(groups);
+  let pending = groupKeys.length;
+  let anyFailed = false;
+
+  const onComplete = () => {
+    pending--;
+    if (pending <= 0) {
+      if (anyFailed) {
+        restoreOneOffs(batch);
+      } else {
+        finalizeOneOffs(batch);
+      }
+    }
+  };
+
+  for (const key of groupKeys) {
+    const group = groups[key];
+    const summaries = group.triggers.map(b => {
+      let s = b.message || `${b.label}: ${JSON.stringify(b.data)}`;
+      if (b.instruction) s += `\n  [instruction: ${b.instruction}]`;
+      return `- ${s}`;
+    });
+
+    const prompt = `You are a home automation sub-agent handling an interrupt.
 
 INTERRUPT DETAILS:
 ${summaries.join('\n')}
 
 YOUR GOAL:
-1. Analyze the interrupt(s) and any provided instructions.
-2. DECIDE: Does the user need to be notified?
+1. Analyze the interrupt and any provided instructions.
+2. Check relevant logs (e.g. skills/home-presence/presence-log.jsonl) or use 'GetLiveContext' if needed to verify conditions.
+3. DECIDE: Does the user need to be notified?
 
 IF NOTIFICATION IS NEEDED:
-- Send a message using: openclaw message send --channel ${channel} --message "Your message here"
+- Send a message using: openclaw message send --channel ${group.channel} --message "Your message here"
 
 IF NO NOTIFICATION IS NEEDED:
 - Exit silently.
 
-Be concise. Only notify if truly important.`;
+CRITICAL:
+- Be concise.
+- Only notify if the condition is truly met and important.
+- Do NOT simply echo the interrupt; add value or verify context.`;
 
-  const args = ['agent', '--local', '--message', prompt];
+    const args = ['agent', '--local', '--message', prompt];
 
-  log('info', `[subagent] Spawning sub-agent for ${batch.length} interrupt(s)`);
-  execFile(OPENCLAW_BIN, args, { timeout: 120000 }, (err, stdout, stderr) => {
-    const ts = new Date().toISOString();
-    appendLog(`[${ts}] SUBAGENT: ${batch.map(b => b.label).join(', ')}\n${stdout || ''}${stderr ? `STDERR: ${stderr}\n` : ''}---\n`);
+    log('info', `[subagent] Spawning sub-agent for group ${key} (${group.triggers.length} interrupt(s))`);
+    execFile(OPENCLAW_BIN, args, { timeout: 120000 }, (err, stdout, stderr) => {
+      const ts = new Date().toISOString();
+      appendLog(`[${ts}] SUBAGENT [${key}]: ${group.triggers.map(b => b.label).join(', ')}\n${stdout || ''}${stderr ? `STDERR: ${stderr}\n` : ''}---\n`);
 
-    if (err) {
-      log('error', `[subagent] Failed: ${err.message}`);
-    } else {
-      log('info', `[subagent] Completed for ${batch.length} interrupt(s)`);
-    }
-  });
+      if (err) {
+        log('error', `[subagent] Failed for group ${key}: ${err.message}`);
+        anyFailed = true;
+      } else {
+        log('info', `[subagent] Completed for group ${key} (${group.triggers.length} interrupt(s))`);
+      }
+      onComplete();
+    });
+  }
 }
 
 // ── Trigger Processing ──────────────────────────────────────────────────────
@@ -294,6 +425,9 @@ function processTrigger(source, data, level) {
     return { status: 'ignored', matched: 0, reason: 'no matching rules' };
   }
 
+  // Mark one-off rules as pending before enqueueing
+  markOneOffsPending(matched);
+
   for (const rule of matched) {
     let msg = rule.message || data.message || `${rule.id}: event from ${source}`;
     // Interpolate placeholders from eventData
@@ -307,7 +441,9 @@ function processTrigger(source, data, level) {
       action: rule.action || 'message',
       message: msg,
       instruction: rule.instruction || null,
-      channel: rule.channel || 'telegram',
+      channel: rule.channel || 'default',
+      session_id: rule.session_id || 'main',
+      one_off: rule.one_off || false,
       level,
     });
   }
@@ -352,6 +488,31 @@ function parseBody(req) {
   });
 }
 
+// Shared handler for POST /rules and POST /add-rule
+async function handleAddRule(req, sendJson) {
+  const rule = await parseBody(req);
+  if (!rule.id) return sendJson(400, { error: 'Missing required field: id' });
+  if (!rule.source) return sendJson(400, { error: 'Missing required field: source' });
+
+  const validation = validateRule(rule);
+  if (!validation.valid) {
+    log('warn', `Rule '${rule.id}' rejected: ${validation.error}`);
+    return sendJson(422, { error: validation.error, rule: rule.id });
+  }
+
+  const rules = readJson(RULES_FILE, []);
+  const existing = rules.findIndex(r => r.id === rule.id);
+  if (existing !== -1) {
+    rules[existing] = { ...rules[existing], ...rule };
+  } else {
+    if (rule.enabled === undefined) rule.enabled = true;
+    rules.push(rule);
+  }
+  saveRules(rules);
+  log('info', `Rule '${rule.id}' added/updated (source=${rule.source})`);
+  return sendJson(200, { status: 'added', rule: rule.id, validated: true });
+}
+
 function startServer() {
   const settings = loadSettings();
   const port = settings.port;
@@ -382,6 +543,23 @@ function startServer() {
         return sendJson(200, { status: 'ok', pid: process.pid });
       }
 
+      // GET /settings — return current settings
+      if (req.method === 'GET' && req.url === '/settings') {
+        return sendJson(200, loadSettings());
+      }
+
+      // PUT /settings — JSON merge patch
+      if (req.method === 'PUT' && req.url === '/settings') {
+        const patch = await parseBody(req);
+        const current = readJson(SETTINGS_FILE, {});
+        const merged = { ...current, ...patch };
+        // Deep-merge pipeline sub-objects
+        if (patch.message) merged.message = { ...current.message, ...patch.message };
+        if (patch.subagent) merged.subagent = { ...current.subagent, ...patch.subagent };
+        saveSettings(merged);
+        return sendJson(200, loadSettings());
+      }
+
       // GET /rules/ha-entities — return unique entity_ids from active ha.state_change rules
       if (req.method === 'GET' && req.url === '/rules/ha-entities') {
         const rules = loadRules();
@@ -391,6 +569,29 @@ function startServer() {
             .map(r => r.condition.entity_id)
         )];
         return sendJson(200, { entities });
+      }
+
+      // GET /rules — list all rules
+      if (req.method === 'GET' && req.url === '/rules') {
+        return sendJson(200, loadAllRules());
+      }
+
+      // DELETE /rules/:id — remove a rule by ID
+      if (req.method === 'DELETE' && req.url.startsWith('/rules/')) {
+        const id = decodeURIComponent(req.url.slice('/rules/'.length));
+        if (!id) return sendJson(400, { error: 'Missing rule ID' });
+        const rules = readJson(RULES_FILE, []);
+        const idx = rules.findIndex(r => r.id === id);
+        if (idx === -1) return sendJson(404, { error: `Rule '${id}' not found` });
+        rules.splice(idx, 1);
+        saveRules(rules);
+        log('info', `Rule '${id}' deleted`);
+        return sendJson(200, { status: 'deleted', rule: id });
+      }
+
+      // POST /rules — add/update a rule (new canonical endpoint)
+      if (req.method === 'POST' && req.url === '/rules') {
+        return handleAddRule(req, sendJson);
       }
 
       // POST /reload — reload rules from disk
@@ -407,29 +608,9 @@ function startServer() {
         return sendJson(200, { status: 'reloaded', rules: active.length, validationErrors: errors });
       }
 
-      // POST /add-rule — add a new rule with validation
+      // POST /add-rule — backward-compatible alias
       if (req.method === 'POST' && req.url === '/add-rule') {
-        const rule = await parseBody(req);
-        if (!rule.id) return sendJson(400, { error: 'Missing required field: id' });
-        if (!rule.source) return sendJson(400, { error: 'Missing required field: source' });
-
-        const validation = validateRule(rule);
-        if (!validation.valid) {
-          log('warn', `Rule '${rule.id}' rejected: ${validation.error}`);
-          return sendJson(422, { error: validation.error, rule: rule.id });
-        }
-
-        const rules = readJson(RULES_FILE, []);
-        const existing = rules.findIndex(r => r.id === rule.id);
-        if (existing !== -1) {
-          rules[existing] = { ...rules[existing], ...rule };
-        } else {
-          if (rule.enabled === undefined) rule.enabled = true;
-          rules.push(rule);
-        }
-        saveRules(rules);
-        log('info', `Rule '${rule.id}' added/updated (source=${rule.source})`);
-        return sendJson(200, { status: 'added', rule: rule.id, validated: true });
+        return handleAddRule(req, sendJson);
       }
 
       sendJson(404, { error: 'Not found' });
@@ -437,6 +618,19 @@ function startServer() {
       log('error', `HTTP error: ${err.message}`);
       sendJson(500, { error: err.message });
     }
+  });
+
+  // ── File Watching / Hot Reload ──────────────────────────────────────────
+  const pollInterval = settings.file_poll_ms || DEFAULT_SETTINGS.file_poll_ms;
+
+  fs.watchFile(RULES_FILE, { interval: pollInterval }, () => {
+    log('info', `[watch] Rules file changed on disk, reloading...`);
+    loadRules();
+  });
+
+  fs.watchFile(SETTINGS_FILE, { interval: pollInterval }, () => {
+    log('info', `[watch] Settings file changed on disk, reloading...`);
+    loadSettings();
   });
 
   server.listen(port, '127.0.0.1', () => {
@@ -447,6 +641,8 @@ function startServer() {
   // Graceful shutdown
   const shutdown = (signal) => {
     log('info', `Received ${signal}, shutting down...`);
+    fs.unwatchFile(RULES_FILE);
+    fs.unwatchFile(SETTINGS_FILE);
     for (const p of Object.values(pipelines)) {
       if (p.timer) { clearTimeout(p.timer); p.timer = null; }
     }

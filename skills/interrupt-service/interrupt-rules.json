@@ -1,21 +1,45 @@
 [
   {
-    "id": "kitchen-occupancy-test",
+    "id": "int-mlehw1k2-1qa8",
     "source": "ha.state_change",
-    "condition": {
-      "entity_id": "binary_sensor.everything_presence_lite_5c0db4_occupancy"
-    },
-    "action": "message",
-    "message": "Kitchen occupancy changed to {{new_state}}! Testing the new unified interrupt system.",
-    "enabled": true
+    "condition": { "entity_id": "person.april_jane", "new_state": "home" },
+    "action": "subagent",
+    "label": "April Jane Arrived (30m Debounce)",
+    "message": null,
+    "instruction": "Only notify Jesten via Telegram if he is NOT home (person.jesten_herrild != 'home'). IMPORTANT: Before notifying, check the presence-log.jsonl to verify she has been away (not_home) for at least 30 consecutive minutes prior to this 'home' event. If she was home within the last 30 minutes, ignore this trigger.",
+    "channel": "telegram",
+    "session_id": "main",
+    "one_off": false,
+    "enabled": true,
+    "created": "2026-02-09T01:30:14.114Z"
   },
   {
-    "id": "example-ha-motion",
-    "source": "home-assistant",
-    "condition": { "entity_id": "binary_sensor.front_door_motion", "state": "on" },
+    "id": "int-mley78rc-44v2",
+    "source": "ha.state_change",
+    "condition": { "entity_id": "magnus.voice_command" },
     "action": "message",
-    "message": "Motion detected at front door",
-    "enabled": false
+    "label": "🦁 Voice",
+    "message": "{{new_state}}",
+    "instruction": null,
+    "channel": "default",
+    "session_id": "main",
+    "one_off": false,
+    "enabled": true,
+    "created": "2026-02-09T09:06:50.520Z"
+  },
+  {
+    "id": "int-mlfikcpi-wax4",
+    "source": "ha.state_change",
+    "condition": { "entity_id": "light.office_lights" },
+    "action": "subagent",
+    "label": "Office Light Toggle Greeting",
+    "message": null,
+    "instruction": "Jesten toggled the office lights. Greet him warmly on the office speaker ('Hello Jesten, I see the lights are back on!') using the follow-and-speak tool. This is a one-off test.",
+    "channel": "default",
+    "session_id": "main",
+    "one_off": true,
+    "enabled": true,
+    "created": "2026-02-09T18:36:54.486Z"
   },
   {
     "id": "example-email-priority",

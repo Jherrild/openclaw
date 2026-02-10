@@ -4,7 +4,7 @@
 
 Centralized, source-agnostic interrupt management daemon. Receives events from collectors (HA Bridge, Mail Sentinel, etc.), matches them against configurable rules, and dispatches notifications through batched, rate-limited pipelines.
 
-**Architecture:** Client/Server model. The daemon holds state (timers, rate limits, circuit breakers) in memory. Collectors use the CLI client to send events.
+**Architecture:** Client/Server model. The daemon holds state (timers, rate limits, circuit breakers) in memory. Collectors and Magnus use the CLI client to manage rules and send events. Rules are persisted to disk and hot-reloaded on change.
 
 ## Skill Metadata
 
@@ -33,31 +33,99 @@ systemctl --user start interrupt-service
 systemctl --user status interrupt-service
 ```
 
-### CLI Usage
+## CLI Reference
+
+The CLI (`interrupt-cli.js`) is the primary interface for Magnus and collectors.
+
+### Commands
+
+| Command          | Description                              |
+|------------------|------------------------------------------|
+| `add`            | Add or update a rule                     |
+| `remove <id>`   | Remove a rule by ID                      |
+| `list`           | List all rules                           |
+| `trigger`        | Fire an event into the pipeline          |
+| `settings get`   | Show current settings                    |
+| `settings set`   | Update settings (JSON merge patch)       |
+| `stats`          | Pipeline statistics                      |
+| `health`         | Liveness check                           |
+| `reload`         | Reload rules from disk without restart   |
+
+### `add` — Add/Update a Rule
 
 ```bash
-# Trigger an interrupt
-node skills/interrupt-service/interrupt-cli.js trigger \
-  --source home-assistant \
-  --data '{"entity_id":"binary_sensor.motion","state":"on"}'
+node skills/interrupt-service/interrupt-cli.js add [options]
+```
 
-# Trigger with message shorthand
+| Flag                 | Required | Default     | Description                                     |
+|----------------------|----------|-------------|-------------------------------------------------|
+| `--source <src>`     | yes      | —           | Event source (e.g. `ha.state_change`, `email`)  |
+| `--condition <json>` | no       | —           | JSON match criteria against event data           |
+| `--action <type>`    | no       | `subagent`  | `message` or `subagent`                          |
+| `--label <text>`     | no       | —           | Human-readable rule name                         |
+| `--message <text>`   | no       | —           | Template with `{{key}}` interpolation            |
+| `--instruction <text>`| no      | —           | Custom instructions for sub-agent                |
+| `--channel <name>`   | no       | `"default"` | Notification channel                             |
+| `--session-id <id>`  | no       | `"main"`    | Target session for subagent dispatch             |
+| `--one-off`          | no       | `false`     | Auto-remove rule after first match               |
+| `--id <id>`          | no       | auto-gen    | Explicit rule ID (update if exists)              |
+| `--skip-validation`  | no       | `false`     | Bypass server-side validator                     |
+
+### `trigger` — Fire an Event
+
+```bash
+node skills/interrupt-service/interrupt-cli.js trigger [options]
+```
+
+| Flag              | Required | Default | Description                              |
+|-------------------|----------|---------|------------------------------------------|
+| `--source <src>`  | yes      | —       | Event source identifier                  |
+| `--data <json>`   | no       | —       | Arbitrary event payload JSON             |
+| `--message <text>`| no       | —       | Shorthand — sets `data.message`          |
+| `--level <lvl>`   | no       | `info`  | `info`, `warn`, or `alert`               |
+
+### CLI Examples
+
+```bash
+# Add a persistent HA interrupt with instructions
+node skills/interrupt-service/interrupt-cli.js add \
+  --source ha.state_change \
+  --condition '{"entity_id":"binary_sensor.front_door_motion","state":"on"}' \
+  --label "Front door motion" \
+  --instruction "Check if anyone is expected; announce security alert if not"
+
+# Add a one-off interrupt (auto-removed after first match)
+node skills/interrupt-service/interrupt-cli.js add \
+  --source ha.state_change \
+  --condition '{"entity_id":"person.jesten","state":"home"}' \
+  --label "Jesten arrived" --one-off
+
+# Add a direct message interrupt (no sub-agent)
+node skills/interrupt-service/interrupt-cli.js add \
+  --source ha.state_change \
+  --condition '{"entity_id":"magnus.voice_command"}' \
+  --action message --message "{{new_state}}" --label "Voice"
+
+# Trigger from collector
+node skills/interrupt-service/interrupt-cli.js trigger \
+  --source ha.state_change \
+  --data '{"entity_id":"binary_sensor.motion","new_state":"on"}'
+
+# System alert
 node skills/interrupt-service/interrupt-cli.js trigger \
   --source system --message "Disk usage above 90%" --level warn
 
-# Trigger a high-priority alert (routes to subagent by default)
-node skills/interrupt-service/interrupt-cli.js trigger \
-  --source email \
-  --data '{"subject":"Server down","priority":true}' \
-  --level alert
+# List / remove
+node skills/interrupt-service/interrupt-cli.js list
+node skills/interrupt-service/interrupt-cli.js remove rule-abc123
 
-# Check service health
-node skills/interrupt-service/interrupt-cli.js health
+# Settings
+node skills/interrupt-service/interrupt-cli.js settings get
+node skills/interrupt-service/interrupt-cli.js settings set '{"message":{"batch_window_ms":1000}}'
 
-# View pipeline stats
+# Status
 node skills/interrupt-service/interrupt-cli.js stats
-
-# Reload rules from disk without restart
+node skills/interrupt-service/interrupt-cli.js health
 node skills/interrupt-service/interrupt-cli.js reload
 ```
 
@@ -65,19 +133,25 @@ node skills/interrupt-service/interrupt-cli.js reload
 
 The daemon exposes a local HTTP API on `127.0.0.1:7600`:
 
-| Method | Path       | Description                  |
-|--------|------------|------------------------------|
-| POST   | `/trigger` | Submit an event              |
-| GET    | `/stats`   | Pipeline statistics          |
-| GET    | `/health`  | Liveness check               |
-| POST   | `/reload`  | Reload rules from disk       |
+| Method | Path                | Description                  |
+|--------|---------------------|------------------------------|
+| POST   | `/trigger`          | Submit an event              |
+| POST   | `/rules`            | Add/update a rule (validated)|
+| DELETE  | `/rules/:id`       | Remove a rule                |
+| GET    | `/rules`            | List all rules               |
+| GET    | `/rules/ha-entities`| HA entity watchlist          |
+| GET    | `/stats`            | Pipeline statistics          |
+| GET    | `/health`           | Liveness check               |
+| POST   | `/reload`           | Reload rules from disk       |
+| GET    | `/settings`         | Get settings                 |
+| PUT    | `/settings`         | Update settings              |
 
 ### POST /trigger
 
 ```json
 {
-  "source": "home-assistant",
-  "data": { "entity_id": "binary_sensor.motion", "state": "on" },
+  "source": "ha.state_change",
+  "data": { "entity_id": "binary_sensor.motion", "new_state": "on" },
   "level": "info"
 }
 ```
@@ -91,6 +165,35 @@ The daemon exposes a local HTTP API on `127.0.0.1:7600`:
 - Events matching rules are routed to the appropriate pipeline (message or subagent)
 - `warn`/`alert` level events with no matching rule get a **default action** (message for warn, subagent for alert)
 - `info` level events with no matching rule are silently ignored
+
+### POST /rules
+
+```json
+{
+  "source": "ha.state_change",
+  "condition": { "entity_id": "binary_sensor.motion", "new_state": "on" },
+  "action": "subagent",
+  "label": "Motion alert",
+  "instruction": "Check camera feed and notify if unexpected",
+  "channel": "telegram",
+  "session_id": "main",
+  "one_off": false
+}
+```
+
+Returns the created/updated rule with its assigned `id`. If `--skip-validation` is not set, the rule is validated against the source's validator (if configured).
+
+### GET /rules/ha-entities
+
+Returns a flat list of `entity_id` values extracted from all `ha.state_change` rules. Used by ha-bridge to know which entities to watch.
+
+### PUT /settings
+
+Accepts a JSON merge patch. Only supplied keys are updated; others are preserved.
+
+```json
+{ "message": { "batch_window_ms": 1000 } }
+```
 
 ## Configuration
 
@@ -109,9 +212,32 @@ The daemon exposes a local HTTP API on `127.0.0.1:7600`:
     "rate_limit_max": 4,
     "rate_limit_window_ms": 60000
   },
-  "log_limit": 1000
+  "log_limit": 1000,
+  "file_poll_ms": 2000,
+  "default_channel": "telegram",
+  "validators": {
+    "ha.state_change": "/home/jherrild/.openclaw/workspace/skills/home-presence/validate-entity.js"
+  }
 }
 ```
+
+| Key                              | Default     | Description                                        |
+|----------------------------------|-------------|----------------------------------------------------|
+| `port`                           | `7600`      | HTTP listen port                                   |
+| `message.batch_window_ms`       | `2000`      | Message pipeline batch window (ms)                 |
+| `message.rate_limit_max`        | `10`        | Max messages per rate window                       |
+| `message.rate_limit_window_ms`  | `60000`     | Rate limit window (ms)                             |
+| `subagent.batch_window_ms`      | `5000`      | Subagent pipeline batch window (ms)                |
+| `subagent.rate_limit_max`       | `4`         | Max subagent dispatches per rate window            |
+| `subagent.rate_limit_window_ms` | `60000`     | Rate limit window (ms)                             |
+| `log_limit`                      | `1000`      | Max entries in dispatch.log before rotation        |
+| `file_poll_ms`                   | `2000`      | Interval to poll rules file for hot reload (ms)    |
+| `default_channel`                | `"telegram"`| Default notification channel for new rules         |
+| `validators`                     | `{}`        | Map of `source` → validator script path            |
+
+### Validators
+
+Validators are external scripts invoked when a rule is added via `POST /rules`. The daemon calls the validator for the rule's `source` (if configured) and rejects the rule if validation fails. Use `--skip-validation` on the CLI to bypass.
 
 ### `interrupt-rules.json`
 
@@ -119,26 +245,37 @@ Array of rules. Each rule specifies:
 
 ```json
 {
-  "id": "rule-unique-id",
-  "source": "home-assistant",
-  "condition": { "entity_id": "binary_sensor.motion", "state": "on" },
-  "action": "message",
-  "message": "Motion detected: {{entity_id}}",
-  "instruction": null,
+  "id": "rule-front-door-motion",
+  "source": "ha.state_change",
+  "condition": { "entity_id": "binary_sensor.front_door_motion", "state": "on" },
+  "action": "subagent",
+  "label": "Front door motion",
+  "message": null,
+  "instruction": "Check if anyone is expected; announce security alert if not",
   "channel": "telegram",
-  "enabled": true
+  "session_id": "main",
+  "one_off": false,
+  "enabled": true,
+  "created": "2025-01-15T10:00:00.000Z"
 }
 ```
 
 **Fields:**
-- `id` (required): Unique rule identifier
-- `source` (optional): Match events from this source only
-- `condition` (optional): Key-value pairs matched against event data. Supports `*` wildcards.
-- `action`: `message` (system event) or `subagent` (spawn analysis agent)
-- `message`: Template with `{{key}}` placeholders interpolated from event data
-- `instruction`: Extra context passed to sub-agent (subagent action only)
-- `channel`: Notification channel for subagent delivery (default: `telegram`)
-- `enabled`: Set `false` to disable without deleting (default: `true`)
+
+| Field         | Required | Default      | Description                                              |
+|---------------|----------|--------------|----------------------------------------------------------|
+| `id`          | yes      | auto-gen     | Unique rule identifier                                   |
+| `source`      | no       | —            | Match events from this source only                       |
+| `condition`   | no       | —            | Key-value pairs matched against event data (`*` wildcards)|
+| `action`      | no       | `subagent`   | `message` (system event) or `subagent` (spawn agent)     |
+| `label`       | no       | —            | Human-readable name for the rule                         |
+| `message`     | no       | —            | Template with `{{key}}` interpolation from event data    |
+| `instruction` | no       | —            | Custom instructions passed to sub-agent                  |
+| `channel`     | no       | `"default"`  | Notification channel for delivery                        |
+| `session_id`  | no       | `"main"`     | Target session for subagent dispatch                     |
+| `one_off`     | no       | `false`      | Auto-remove rule after first match                       |
+| `enabled`     | no       | `true`       | Set `false` to disable without deleting                  |
+| `created`     | auto     | now          | ISO timestamp of rule creation                           |
 
 ## Pipelines
 
@@ -150,27 +287,46 @@ Array of rules. Each rule specifies:
 ### Subagent Pipeline
 - Spawns a sub-agent via `openclaw agent --local` to analyze and decide on notification
 - Used for complex events that need context/summarization
+- Batched events are grouped by `channel` + `session_id` — one subagent per group
 - Default batch window: 5s, rate limit: 4/min
+
+### One-Off Lifecycle
+Rules with `one_off: true` are automatically removed from `interrupt-rules.json` after their first successful match. Useful for transient watches (e.g. "tell me when Jesten gets home").
 
 ### Circuit Breakers
 Both pipelines have independent circuit breakers. When rate limit is exceeded, the circuit opens and events are dropped with a warning log until the window resets.
 
+### Hot Reload
+The daemon polls `interrupt-rules.json` every `file_poll_ms` milliseconds. When the file changes on disk (e.g. manual edit or external tool), rules are reloaded automatically without a restart. You can also force an immediate reload via `POST /reload` or `interrupt-cli.js reload`.
+
 ## Integration with Collectors
 
-### From ha-bridge (Phase 2)
+### From ha-bridge
 ```bash
-# In ha-bridge, replace internal interrupt-manager calls with:
+# ha-bridge calls trigger when a watched entity changes state:
 node skills/interrupt-service/interrupt-cli.js trigger \
-  --source home-assistant \
-  --data "{\"entity_id\":\"$ENTITY\",\"state\":\"$STATE\"}"
+  --source ha.state_change \
+  --data "{\"entity_id\":\"$ENTITY\",\"new_state\":\"$STATE\",\"old_state\":\"$OLD\"}"
 ```
 
-### From mail-sentinel (Phase 4)
+ha-bridge fetches its watchlist from `GET /rules/ha-entities` to know which HA entities to subscribe to.
+
+### From mail-sentinel
 ```bash
 node skills/interrupt-service/interrupt-cli.js trigger \
   --source email \
   --data "{\"subject\":\"$SUBJECT\",\"sender\":\"$FROM\",\"priority\":true}" \
   --level alert
+```
+
+### From Magnus (ad-hoc)
+Magnus can dynamically add rules at runtime:
+```bash
+# "Watch for Jesten to get home and tell me"
+node skills/interrupt-service/interrupt-cli.js add \
+  --source ha.state_change \
+  --condition '{"entity_id":"person.jesten","state":"home"}' \
+  --label "Jesten arrived" --one-off
 ```
 
 ## Logs
@@ -183,7 +339,7 @@ node skills/interrupt-service/interrupt-cli.js trigger \
 | File                         | Purpose                              |
 |------------------------------|--------------------------------------|
 | `interrupt-service.js`       | Daemon (HTTP server + pipeline logic)|
-| `interrupt-cli.js`           | CLI client for triggering events     |
+| `interrupt-cli.js`           | CLI client (add/remove/trigger/etc.) |
 | `interrupt-service.service`  | systemd user unit file               |
 | `settings.json`              | Service configuration                |
 | `interrupt-rules.json`       | Event matching rules                 |
