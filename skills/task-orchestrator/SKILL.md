@@ -99,6 +99,15 @@ alert: Read .agent-pending for the manifest. File new notes via obsidian-scribe.
 | "Run supernote sync every 10 minutes and tell me when it finds files" | `add supernote-sync ./check-and-sync.sh --interval=10m --interrupt="alert: ..."` |
 | "Add a monitor but I want to edit the instructions later" | `add my-task ./script.sh --interval=5m --interrupt-file=./config.txt` |
 | "Just run this script on a schedule, don't bother me" | `add my-task ./script.sh --interval=1h` (no --interrupt) |
+| "Run supernote sync right now" | `run supernote-sync` |
+| "What tasks are scheduled?" | `list` |
+| "Is supernote sync working?" | `status supernote-sync` |
+| "Show me the supernote sync logs" | `logs supernote-sync` |
+| "Stop the supernote sync for now" | `disable supernote-sync` |
+| "Turn supernote sync back on" | `enable supernote-sync` |
+| "Remove the supernote sync entirely" | `remove supernote-sync` |
+
+All commands prefixed with `node skills/task-orchestrator/orchestrator.js`.
 
 ## Architecture
 
@@ -120,4 +129,11 @@ Scripts run locally on the host. With the interrupt integration, scripts no long
 | `interrupt-wrapper.sh` | Wraps scripts for interrupt integration |
 | `tasks.json` | Task metadata (persisted) |
 | `templates/` | systemd unit file templates |
+| `prd/` | Product requirements documents |
 | `SKILL.md` | This file |
+
+## Currently Registered Tasks
+
+| Task | Script | Interval | Interrupt |
+|------|--------|----------|-----------|
+| `supernote-sync` | `skills/supernote-sync/check-and-sync.sh` | 5m | Not yet migrated (still uses direct `openclaw system event`) |
