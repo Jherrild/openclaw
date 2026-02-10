@@ -6,9 +6,8 @@
 
 const fs = require('fs');
 const path = require('path');
-const { execFile } = require('child_process');
+const http = require('http');
 const WebSocket = require('ws');
-const InterruptManager = require('./interrupt-manager');
 
 // ── Configuration ──────────────────────────────────────────────────────────────
 
@@ -164,8 +163,46 @@ process.on('SIGUSR1', () => {
   }, DEBUG_DUMP_DURATION_MS);
 });
 
-// ── Intelligent Interrupt Dispatcher ────────────────────────────────────────
-const interruptManager = new InterruptManager();
+// ── Interrupt Service Client ────────────────────────────────────────────────
+const INTERRUPT_SERVICE_PORT = 7600;
+
+/**
+ * Forward an event to the central interrupt-service via HTTP POST /trigger.
+ * Fire-and-forget — errors are logged but never block the bridge.
+ */
+function triggerInterrupt(source, data, level = 'info') {
+  const payload = JSON.stringify({ source, data, level });
+  const opts = {
+    hostname: '127.0.0.1',
+    port: INTERRUPT_SERVICE_PORT,
+    path: '/trigger',
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) },
+    timeout: 5000,
+  };
+
+  const req = http.request(opts, (res) => {
+    let body = '';
+    res.on('data', chunk => { body += chunk; });
+    res.on('end', () => {
+      if (res.statusCode !== 200) {
+        log('error', `[interrupt] Service returned ${res.statusCode}: ${body}`);
+      }
+    });
+  });
+
+  req.on('error', (err) => {
+    if (err.code === 'ECONNREFUSED') {
+      log('error', `[interrupt] Service not running on port ${INTERRUPT_SERVICE_PORT}`);
+    } else {
+      log('error', `[interrupt] Request failed: ${err.message}`);
+    }
+  });
+
+  req.on('timeout', () => { req.destroy(); });
+  req.write(payload);
+  req.end();
+}
 
 // Per-file line counts, lazy-initialized on first write
 const _lineCounts = {};
@@ -212,18 +249,6 @@ function appendLog(filePath, entry) {
   } catch (err) {
     log('error', `Failed to write ${path.basename(filePath)}: ${err.message}`);
   }
-}
-
-// ── Push event to Magnus via openclaw system event (high-priority only) ─────
-
-function pushToMagnus(text) {
-  log('info', `[WAKE] Pushing high-priority event: ${text}`);
-  execFile('openclaw', ['system', 'event', '--text', text, '--mode', 'now'], (err, stdout, stderr) => {
-    if (err) {
-      log('error', `openclaw system event failed: ${err.message}`);
-      if (stderr) log('error', `  stderr: ${stderr.trim()}`);
-    }
-  });
 }
 
 // ── Format a state_changed event into a concise event string ───────────────────
@@ -334,7 +359,7 @@ function connect() {
           const message = data && data.message ? data.message : '';
           if (message) {
             log('info', `[voice] Received voice command: "${message}"`);
-            interruptManager.evaluate('magnus.voice_command', null, message);
+            triggerInterrupt('ha.voice_command', { message }, 'alert');
           }
           break;
         }
@@ -373,13 +398,16 @@ function connect() {
         appendLog(logPath, entry);
         log('info', `[${tier.name}] ${eventText}`);
 
-        // Only wake the agent for high-priority entities
+        // Forward high-priority entities to interrupt service
         if (WAKE_ON_ENTITIES.has(data.entity_id)) {
-          pushToMagnus(eventText);
+          triggerInterrupt('ha.state_change', {
+            entity_id: data.entity_id,
+            old_state: oldState,
+            new_state: newState,
+            summary: eventText,
+          }, 'alert');
         }
 
-        // Evaluate against registered interrupt rules
-        interruptManager.evaluate(data.entity_id, oldState, newState);
         break;
       }
 
@@ -449,8 +477,7 @@ log('info', `All logs capped at ${LOG_MAX_LINES} lines, stored in ${__dirname}`)
 log('info', WAKE_ON_ENTITIES.size > 0
   ? `Wake-on entities: ${[...WAKE_ON_ENTITIES].join(', ')}`
   : 'Running in passive log-only mode (no agent interrupts)');
-const iStats = interruptManager.stats();
-log('info', `Interrupt dispatcher active: ${iStats.persistentRules} persistent, ${iStats.oneOffRules} one-off rule(s)`);
+log('info', `Interrupt forwarding via interrupt-service on port ${INTERRUPT_SERVICE_PORT}`);
 
 connect();
 
@@ -460,7 +487,6 @@ function shutdown(signal) {
   shuttingDown = true;
   clearTimers();
   if (debugDumpTimer) { clearTimeout(debugDumpTimer); debugDumpTimer = null; }
-  interruptManager.destroy();
   if (ws) {
     ws.close();
     ws = null;

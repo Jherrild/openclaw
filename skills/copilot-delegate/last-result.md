@@ -1,3 +1,3 @@
-# Result: Document local-rag auto-indexing hooks in obsidian-scribe
+# Result: Phase 2 Refactor Home Presence (ha-bridge)
 
-Updated `skills/obsidian-scribe/SKILL.md` to document that local-rag is automatically triggered asynchronously after file operations (scribe_save, scribe_append, scribe_move, scribe_archive), added a new "Auto-Indexing" subsection under Workflows and a "Companion Tool: local-rag" cross-reference section above Tools. No issues encountered; all changes are documentation-only.
+Refactored `skills/home-presence/ha-bridge.js` to remove the internal `InterruptManager` dependency and instead forward all interrupts to the centralized `interrupt-service` via HTTP POST to port 7600. Voice commands are forwarded as source `ha.voice_command` (level `alert`), and high-priority WAKE_ON_ENTITIES state changes as source `ha.state_change` (level `alert`). Deleted the now-obsolete `skills/home-presence/interrupt-manager.js`; ha-bridge is now a dumb logging/forwarding client with no interrupt logic of its own.
