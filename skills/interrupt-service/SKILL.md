@@ -357,6 +357,19 @@ node skills/interrupt-service/interrupt-cli.js add \
   --label "Jesten arrived" --one-off
 ```
 
+## Quick Reference: What Magnus Says → What to Run
+
+| User Request | Command |
+|-------------|---------|
+| "Watch for April to get home" | `add --source ha.state_change --condition '{"entity_id":"person.april_jane","new_state":"home"}' --label "April arrived" --one-off` |
+| "Alert me on front door motion (permanently)" | `add --source ha.state_change --condition '{"entity_id":"binary_sensor.front_door_motion","new_state":"on"}' --label "Front door motion"` |
+| "What interrupts are active?" | `list` |
+| "Stop watching for April" | `remove <rule-id>` |
+| "Is the interrupt system healthy?" | `health` (+ `curl 127.0.0.1:7601/health` for ha-bridge) |
+| "Something broke, run the tests" | `node skills/interrupt-service/test-integration.js` |
+
+All commands prefixed with `node skills/interrupt-service/interrupt-cli.js`.
+
 ## Testing
 
 Run the integration test suite to verify the service is working correctly. The daemon must be running.
@@ -382,6 +395,7 @@ Tests cover: health, settings, stats, rule CRUD, trigger matching, one-off lifec
 | `settings.json`              | Service configuration                |
 | `interrupt-rules.json`       | Event matching rules                 |
 | `dispatch.log`               | Dispatch result log (auto-generated) |
-| `test-integration.js`        | Integration test suite (18 tests)    |
+| `test-integration.js`        | Integration test suite (20 tests)    |
+| `FLOW_NARRATIVE.md`          | End-to-end flow explanation           |
 | `PRD.md`                     | Product requirements document        |
 | `SKILL.md`                   | This file                            |
