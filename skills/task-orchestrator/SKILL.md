@@ -7,8 +7,16 @@ A lightweight, systemd-backed task scheduler for managing arbitrary scripts on a
 ```bash
 cd ~/.openclaw/workspace/skills/task-orchestrator
 
-# Add a task
+# Add a task (no interrupts — pure scheduler)
 ./orchestrator.js add my-task /path/to/script.sh --interval=30m
+
+# Add a task with automatic interrupt handling
+./orchestrator.js add my-monitor /path/to/check.sh --interval=10m \
+  --interrupt="alert: Check the results and notify the user if important."
+
+# Add a task with interrupt config from a file (editable without re-registering)
+./orchestrator.js add my-sync /path/to/sync.sh --interval=5m \
+  --interrupt-file=/path/to/interrupt-config.txt
 
 # List tasks
 ./orchestrator.js list
@@ -38,24 +46,78 @@ cd ~/.openclaw/workspace/skills/task-orchestrator
 
 ### Add Options
 
-- `--interval=<time>` - Timer interval (default: 30m). Examples: 30m, 1h, 2h, 45min
-- `--args="..."` - Arguments to pass to the script
-- `--working-dir=<path>` - Working directory for script execution
-- `--node-path=<path>` - NODE_PATH environment variable
+| Flag | Description |
+|------|-------------|
+| `--interval=<time>` | Timer interval (default: 30m). Examples: 30m, 1h, 2h, 45min |
+| `--args="..."` | Arguments to pass to the script |
+| `--working-dir=<path>` | Working directory for script execution |
+| `--node-path=<path>` | NODE_PATH environment variable |
+| `--interrupt="level: instruction"` | Enable interrupt-on-stdout. See below. |
+| `--interrupt-file=<path>` | Same, but reads config from file at trigger time. Mutually exclusive with `--interrupt`. |
+
+## Interrupt Integration
+
+When `--interrupt` or `--interrupt-file` is set, the orchestrator wraps the script with `interrupt-wrapper.sh`, which integrates with the [interrupt-service](../interrupt-service/SKILL.md).
+
+### Script Contract
+
+| Exit Code | Stdout | Result |
+|-----------|--------|--------|
+| 0 | Non-empty | ✅ Interrupt fired with stdout as message |
+| 0 | Empty | Nothing happened — stay silent |
+| Non-zero | Any | Script failed — logged, NO interrupt fired |
+
+Scripts don't need to know about the interrupt service. They just echo their findings and exit 0. The wrapper handles the rest.
+
+### `--interrupt` (inline)
+
+The value is a `"level: instruction"` string. Level is `info`, `warn`, or `alert`. The instruction tells the sub-agent how to react.
+
+```bash
+orchestrator.js add supernote-sync ./check-and-sync.sh --interval=10m \
+  --interrupt="alert: Read .agent-pending for the manifest. File new notes via obsidian-scribe."
+```
+
+### `--interrupt-file` (from file)
+
+Same format, but read from a file **at trigger time** — not at registration. This means you can edit the file to change behavior without re-registering the task.
+
+```bash
+orchestrator.js add supernote-sync ./check-and-sync.sh --interval=10m \
+  --interrupt-file=./supernote-interrupt.txt
+```
+
+Where `supernote-interrupt.txt` contains:
+```
+alert: Read .agent-pending for the manifest. File new notes via obsidian-scribe.
+```
+
+### What Magnus Says → What to Do
+
+| Request | Command |
+|---------|---------|
+| "Run supernote sync every 10 minutes and tell me when it finds files" | `add supernote-sync ./check-and-sync.sh --interval=10m --interrupt="alert: ..."` |
+| "Add a monitor but I want to edit the instructions later" | `add my-task ./script.sh --interval=5m --interrupt-file=./config.txt` |
+| "Just run this script on a schedule, don't bother me" | `add my-task ./script.sh --interval=1h` (no --interrupt) |
 
 ## Architecture
 
 Tasks are managed as native systemd user services and timers:
 - Service unit: `~/.config/systemd/user/openclaw-task-<name>.service`
 - Timer unit: `~/.config/systemd/user/openclaw-task-<name>.timer`
+- Wrapper: `interrupt-wrapper.sh` (only when interrupt is configured)
 - Metadata: `tasks.json` in this directory
 
 ## Cheap Triggers Philosophy
 
-Scripts run locally on the host. They should only wake the main agent (via `openclaw system event`) if they detect actionable work. This keeps agent costs low while maintaining responsiveness.
+Scripts run locally on the host. With the interrupt integration, scripts no longer need to call `openclaw system event` directly — they just echo findings to stdout. The interrupt-service handles batching, rate limiting, and dispatch automatically.
 
-## Managed Tasks
+## Files
 
-Currently managed tasks (see `tasks.json` for details):
-
-- **supernote-sync** - Syncs Supernote files from Google Drive (45m interval)
+| File | Purpose |
+|------|---------|
+| `orchestrator.js` | CLI for managing tasks |
+| `interrupt-wrapper.sh` | Wraps scripts for interrupt integration |
+| `tasks.json` | Task metadata (persisted) |
+| `templates/` | systemd unit file templates |
+| `SKILL.md` | This file |

@@ -261,6 +261,16 @@ Any collector that wants push notifications must expose:
 
 This protocol is generic — future collectors (mail-sentinel, task-sentinel) can implement the same interface.
 
+### 6.2 Task Orchestrator Integration
+
+The `task-orchestrator` skill provides automatic interrupt handling for any scheduled script via `--interrupt` or `--interrupt-file` flags at registration time.
+
+**Contract:** Scripts echo findings to stdout and exit 0. The orchestrator's `interrupt-wrapper.sh` captures stdout and fires `interrupt-cli.js trigger --source task.<name>` automatically. Scripts that exit silently (no stdout) or fail (non-zero exit) do not trigger interrupts.
+
+**`--interrupt-file`** reads the interrupt config from a file **at trigger time**, allowing behavior changes without re-registering the task.
+
+See [task-orchestrator SKILL.md](skills/task-orchestrator/SKILL.md) for details.
+
 ## 7. Guiding Principles
 1. **Single Daemon, Single Source of Truth:** One process owns all interrupt state. No duplication.
 2. **Reuse > Duplicate:** Pipeline logic (batching, rate limiting, circuit breakers, dispatch) is written once.

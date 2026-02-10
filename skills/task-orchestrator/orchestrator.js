@@ -99,10 +99,14 @@ function cmdAdd(args) {
   const usage = `Usage: orchestrator.js add <name> <script> [--interval=30m] [--args="..."]
   
 Options:
-  --interval=<time>  Timer interval (default: 30m). Examples: 30m, 1h, 2h, 45min
-  --args="..."       Arguments to pass to the script
-  --working-dir=...  Working directory for the script (default: script's directory)
-  --node-path=...    NODE_PATH environment variable for the script`;
+  --interval=<time>       Timer interval (default: 30m). Examples: 30m, 1h, 2h, 45min
+  --args="..."            Arguments to pass to the script
+  --working-dir=...       Working directory for the script (default: script's directory)
+  --node-path=...         NODE_PATH environment variable for the script
+  --interrupt="..."       Enable interrupt on stdout. Format: "level: instruction"
+                          (e.g. --interrupt="alert: Read .agent-pending for manifest.")
+  --interrupt-file=...    Same as --interrupt but reads config from a file at trigger time.
+                          Mutually exclusive with --interrupt.`;
 
   if (args.length < 2) {
     console.log(usage);
@@ -122,6 +126,8 @@ Options:
   let scriptArgs = '';
   let workingDir = path.dirname(scriptPath);
   let nodePath = '';
+  let interrupt = null;
+  let interruptFile = null;
 
   for (let i = 2; i < args.length; i++) {
     const arg = args[i];
@@ -133,7 +139,23 @@ Options:
       workingDir = path.resolve(arg.split('=').slice(1).join('='));
     } else if (arg.startsWith('--node-path=')) {
       nodePath = arg.split('=').slice(1).join('=');
+    } else if (arg.startsWith('--interrupt=')) {
+      interrupt = arg.split('=').slice(1).join('=');
+    } else if (arg.startsWith('--interrupt-file=')) {
+      interruptFile = path.resolve(arg.split('=').slice(1).join('='));
     }
+  }
+
+  // Validate mutual exclusivity
+  if (interrupt && interruptFile) {
+    log('error', '--interrupt and --interrupt-file are mutually exclusive. Use one or the other.');
+    process.exit(1);
+  }
+
+  // Validate interrupt-file exists
+  if (interruptFile && !fs.existsSync(interruptFile)) {
+    log('error', `Interrupt file not found: ${interruptFile}`);
+    process.exit(1);
   }
 
   const tasks = loadTasks();
@@ -160,6 +182,19 @@ Options:
   }
   if (scriptArgs) {
     execStart += ` ${scriptArgs}`;
+  }
+
+  // Wrap with interrupt-wrapper.sh if interrupt is configured
+  const hasInterrupt = interrupt || interruptFile;
+  if (hasInterrupt) {
+    const wrapperPath = path.join(SKILL_DIR, 'interrupt-wrapper.sh');
+    const mode = interruptFile ? 'file' : 'inline';
+    const value = interruptFile || interrupt;
+    // The wrapper takes: <task-name> <mode> <value> <script> [args...]
+    execStart = `/bin/bash ${wrapperPath} ${taskName} ${mode} '${value.replace(/'/g, "'\\''")}' ${scriptPath}`;
+    if (scriptArgs) {
+      execStart += ` ${scriptArgs}`;
+    }
   }
 
   // Render templates
@@ -198,6 +233,8 @@ Options:
     args: scriptArgs,
     workingDir,
     nodePath: nodePath || '',
+    interrupt: interrupt || null,
+    interruptFile: interruptFile || null,
     unit,
     createdAt: new Date().toISOString(),
     enabled: true,
@@ -207,6 +244,8 @@ Options:
   console.log(`\n✓ Task '${taskName}' added and started.`);
   console.log(`  Script: ${scriptPath}`);
   console.log(`  Interval: ${interval}`);
+  if (interrupt) console.log(`  Interrupt: ${interrupt}`);
+  if (interruptFile) console.log(`  Interrupt file: ${interruptFile}`);
   console.log(`  Timer: ${unit}.timer`);
   console.log(`\nView logs: orchestrator.js logs ${taskName}`);
   console.log(`Run now:   orchestrator.js run ${taskName}`);
@@ -465,6 +504,8 @@ Commands:
     --args="..."                  Arguments to pass to the script
     --working-dir=<path>          Working directory
     --node-path=<path>            NODE_PATH environment
+    --interrupt="level: text"     Fire interrupt when script outputs to stdout
+    --interrupt-file=<path>       Same, but reads config from file at trigger time
 
   remove <name>                   Remove a task and its systemd units
   list                            List all managed tasks
@@ -475,8 +516,17 @@ Commands:
   disable <name>                  Disable a task's timer (keeps config)
   help                            Show this help message
 
+Interrupt Contract:
+  When --interrupt or --interrupt-file is set, the script is wrapped.
+  - Exit 0 + stdout has content → fire interrupt with stdout as message
+  - Exit 0 + no stdout          → stay silent (nothing happened)
+  - Exit non-zero               → script failed, no interrupt fired
+
 Examples:
-  orchestrator.js add supernote-sync ./check-and-sync.sh --interval=45m
+  orchestrator.js add supernote-sync ./check-and-sync.sh --interval=10m \\
+    --interrupt="alert: Read .agent-pending for manifest. File new notes via obsidian-scribe."
+  orchestrator.js add my-monitor ./check.sh --interval=5m \\
+    --interrupt-file=./interrupt-config.txt
   orchestrator.js list
   orchestrator.js run supernote-sync
   orchestrator.js logs supernote-sync 100
