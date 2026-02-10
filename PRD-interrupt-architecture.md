@@ -38,7 +38,9 @@ graph TD
 
 ## 3. Implementation Phases
 
-### Phase 1: The Unified Interrupt Service (`skills/interrupt-service`)
+### Phase 1: The Unified Interrupt Service
+**Reference:** [Detailed PRD](skills/interrupt-service/PRD.md)
+
 **Goal:** Extract the "Pipeline" logic from `home-presence` into a generic standalone daemon.
 - **Component:** `interrupt-service` (Systemd Daemon).
 - **Responsibilities:**
@@ -54,7 +56,9 @@ graph TD
 - **New Logic:** `ha-bridge` simply forwards relevant state changes to `interrupt-service` via CLI/IPC.
 - **Result:** `ha-bridge` becomes lighter; interrupt logic is centralized.
 
-### Phase 3: The Semantic Filter (`skills/priority-check`)
+### Phase 3: The Semantic Filter
+**Reference:** [Detailed PRD](skills/priority-check/PRD.md)
+
 **Goal:** A reusable brain for determining "Is this text important?"
 - **Component:** `priority-check` (CLI Tool).
 - **Features:** "Filter Pyramid" strategy.
