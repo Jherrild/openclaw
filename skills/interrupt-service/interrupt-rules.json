@@ -1,0 +1,18 @@
+[
+  {
+    "id": "example-ha-motion",
+    "source": "home-assistant",
+    "condition": { "entity_id": "binary_sensor.front_door_motion", "state": "on" },
+    "action": "message",
+    "message": "Motion detected at front door",
+    "enabled": false
+  },
+  {
+    "id": "example-email-priority",
+    "source": "email",
+    "condition": { "priority": true },
+    "action": "subagent",
+    "instruction": "Summarize the email and decide if urgent.",
+    "enabled": false
+  }
+]
