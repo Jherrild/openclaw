@@ -22,13 +22,35 @@ Three-stage overhaul that converts .note files into Obsidian-native content (PDF
 - Ensure known files with unchanged `modifiedTime` are skipped entirely (no download, no buffer entry)
 - Add logging for skip decisions to aid debugging
 
-### 1.2 Move Mapping to Vault
-- Move `sync-mapping.json` to `<vault>/metadata/supernote-sync-mapping.json`
+### 1.2 Move Mapping to Vault (YAML in Markdown)
+- Migrate `sync-mapping.json` to `<vault>/metadata/supernote-sync-mapping.md`
 - Vault path: `/mnt/c/Users/Jherr/Documents/remote-personal/metadata/`
+- **Format change:** Store as YAML inside a `.md` file, not JSON. Obsidian renders YAML natively, and it's human-readable/editable from the vault.
 - Create `metadata/` directory if it doesn't exist
-- Update all references in `check-and-sync.sh` to use the new path
+- Update all references in `check-and-sync.sh` and agent tools to read/write YAML
 - Keep the `.bak` backup alongside it in `metadata/`
 - This ensures the mapping is backed up with the vault (Obsidian vault has its own backup)
+
+**File structure (`supernote-sync-mapping.md`):**
+```markdown
+---
+description: Supernote file sync mappings (auto-managed by supernote-sync)
+---
+
+- fileId: "1xyj92mjwGo..."
+  name: "Board Meeting 12.16.note"
+  mdPath: "2-Areas/Home/Board Meeting 12.16.md"
+  pdfPath: "2-Areas/Home/documents/Board Meeting 12.16.pdf"
+  modifiedTime: "2026-01-31T17:56:27.577Z"
+
+- fileId: "1Zq_GR7HUGKj..."
+  name: "Taxes 2024.note"
+  mdPath: "2-Areas/Finance/Taxes/Taxes 2024.md"
+  pdfPath: "2-Areas/Finance/Taxes/documents/Taxes 2024.pdf"
+  modifiedTime: "2026-01-31T17:56:29.595Z"
+```
+
+Paths in the YAML are **relative to the vault root** for portability.
 
 ### 1.3 Install Conversion Tools
 - **`supernote_pdf`** (Rust): Install via `cargo install supernote_pdf`. Converts .note → .pdf (raster page images, fast).
@@ -82,25 +104,30 @@ fileId: <google-drive-file-id>
 ```
 
 ### 2.2 Move Coordination with Obsidian Scribe
-When a note's .md file is moved using `scribe_move`, any linked files in `/documents/` must also be moved to keep them co-located.
+When a note's .md file is moved using `scribe_move`, two things must happen:
 
-**Change to obsidian-scribe's move.js:**
-- When moving a .md file, scan it for `![[documents/...]]` links
+**A. Move linked documents:**
+- Scan the .md file for `![[documents/...]]` links
 - For each linked file, move it from `<old-path>/documents/<file>` to `<new-path>/documents/<file>`
 - Create destination `documents/` directory if needed
 
+**B. Update sync mapping:**
+- After moving, check `<vault>/metadata/supernote-sync-mapping.md` for any entry whose `mdPath` or `pdfPath` matches the old location
+- If found, update both `mdPath` and `pdfPath` to reflect the new location
+- This keeps the mapping in sync without requiring the agent to manually update it
+
+This means the mapping file is **always correct** regardless of whether files are moved by the agent, by the user reorganizing their vault, or by any scribe operation.
+
 ### 2.3 Updated Mapping Schema
-The mapping now tracks the vault .md path (not the .note path):
-```json
-{
-  "<fileId>": {
-    "name": "Board Meeting 12.16.note",
-    "mdPath": "/mnt/c/.../2-Areas/Home/Board Meeting 12.16.md",
-    "pdfPath": "/mnt/c/.../2-Areas/Home/documents/Board Meeting 12.16.pdf",
-    "modifiedTime": "2026-02-10T..."
-  }
-}
+The mapping now uses YAML in a `.md` file (see §1.2). Each entry tracks the vault .md and .pdf paths (not the .note path):
+```yaml
+- fileId: "1xyj92mjwGo..."
+  name: "Board Meeting 12.16.note"
+  mdPath: "2-Areas/Home/Board Meeting 12.16.md"
+  pdfPath: "2-Areas/Home/documents/Board Meeting 12.16.pdf"
+  modifiedTime: "2026-01-31T17:56:27.577Z"
 ```
+Paths are relative to vault root for portability.
 
 ---
 
@@ -192,11 +219,11 @@ Both must be in PATH for the sync script.
 
 | File | Change |
 |------|--------|
-| `supernote-sync/check-and-sync.sh` | Fix buffer bug, move mapping path, add conversion step |
+| `supernote-sync/check-and-sync.sh` | Fix buffer bug, new mapping path (YAML), add conversion step |
 | `supernote-sync/get_new_notes.js` | NEW — Agent tool |
 | `supernote-sync/get_updated_notes.js` | NEW — Agent tool |
 | `supernote-sync/store_markdown.js` | NEW — Agent tool |
 | `supernote-sync/obsidian_migrate.js` | NEW — Agent tool |
 | `supernote-sync/SKILL.md` | Rewrite with new workflow |
-| `obsidian-scribe/move.js` | Update to move linked /documents/ files |
-| `<vault>/metadata/supernote-sync-mapping.json` | NEW location for mapping |
+| `obsidian-scribe/move.js` | Move linked /documents/ files + update sync mapping |
+| `<vault>/metadata/supernote-sync-mapping.md` | NEW — YAML mapping in vault |
