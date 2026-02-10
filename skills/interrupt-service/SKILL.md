@@ -237,7 +237,13 @@ Accepts a JSON merge patch. Only supplied keys are updated; others are preserved
 
 ### Validators
 
-Validators are external scripts invoked when a rule is added via `POST /rules`. The daemon calls the validator for the rule's `source` (if configured) and rejects the rule if validation fails. Use `--skip-validation` on the CLI to bypass.
+Validators are external scripts invoked when a rule is added via `POST /rules`. The daemon calls the validator for the rule's `source` (if configured) and rejects the rule if validation fails.
+
+**Validation skips:**
+- `--skip-validation` flag on CLI bypasses all checks
+- Wildcard patterns (e.g., `light.*`) in `condition.entity_id` skip entity existence checks
+- Virtual entities with `magnus.*` prefix skip existence checks
+- Sources with no configured validator are always accepted
 
 ### `interrupt-rules.json`
 
@@ -291,7 +297,7 @@ Array of rules. Each rule specifies:
 - Default batch window: 5s, rate limit: 4/min
 
 ### One-Off Lifecycle
-Rules with `one_off: true` are automatically removed from `interrupt-rules.json` after their first successful match. Useful for transient watches (e.g. "tell me when Jesten gets home").
+Rules with `one_off: true` are automatically removed from `interrupt-rules.json` after their first **successful** dispatch. If dispatch fails (e.g., openclaw gateway is down), the rule is **restored** so it can re-trigger later. This prevents losing one-off rules due to transient failures.
 
 ### Circuit Breakers
 Both pipelines have independent circuit breakers. When rate limit is exceeded, the circuit opens and events are dropped with a warning log until the window resets.
@@ -329,6 +335,16 @@ node skills/interrupt-service/interrupt-cli.js add \
   --label "Jesten arrived" --one-off
 ```
 
+## Testing
+
+Run the integration test suite to verify the service is working correctly. The daemon must be running.
+
+```bash
+node skills/interrupt-service/test-integration.js
+```
+
+Tests cover: health, settings, stats, rule CRUD, trigger matching, one-off lifecycle (including restore on failed dispatch), default actions by level, skip-validation, HA entity watchlist, reload, and settings update. All 18 tests should pass. Run this after any code change to the daemon or CLI.
+
 ## Logs
 
 - **stdout/stderr**: Goes to systemd journal (`journalctl --user -u interrupt-service`)
@@ -344,5 +360,6 @@ node skills/interrupt-service/interrupt-cli.js add \
 | `settings.json`              | Service configuration                |
 | `interrupt-rules.json`       | Event matching rules                 |
 | `dispatch.log`               | Dispatch result log (auto-generated) |
+| `test-integration.js`        | Integration test suite (18 tests)    |
 | `PRD.md`                     | Product requirements document        |
 | `SKILL.md`                   | This file                            |
