@@ -6,8 +6,10 @@
     "args": "",
     "workingDir": "/home/jherrild/.openclaw/workspace/skills/supernote-sync",
     "nodePath": "",
+    "interrupt": "alert: Read .agent-pending for the manifest. File new notes via obsidian-scribe.",
+    "interruptFile": null,
     "unit": "openclaw-task-supernote-sync",
-    "createdAt": "2026-02-09T04:33:35.294Z",
+    "createdAt": "2026-02-10T06:15:04.477Z",
     "enabled": true
   }
 }

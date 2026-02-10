@@ -136,4 +136,4 @@ Scripts run locally on the host. With the interrupt integration, scripts no long
 
 | Task | Script | Interval | Interrupt |
 |------|--------|----------|-----------|
-| `supernote-sync` | `skills/supernote-sync/check-and-sync.sh` | 5m | Not yet migrated (still uses direct `openclaw system event`) |
+| `supernote-sync` | `skills/supernote-sync/check-and-sync.sh` | 5m | `alert: Read .agent-pending for the manifest. File new notes via obsidian-scribe.` |

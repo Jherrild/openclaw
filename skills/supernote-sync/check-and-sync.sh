@@ -144,7 +144,7 @@ if [ "$NEW" -gt 0 ]; then
     log "Waking agent for $NEW new file(s), $UPDATED updated file(s)"
     jq -n --argjson new "$NEW_JSON" --argjson updated "$UPDATED_JSON" \
       '{"new": $new, "updated": $updated}' > "$AGENT_PENDING"
-    openclaw system event --text "supernote-sync: $NEW new file(s) downloaded to buffer, $UPDATED updated. Read .agent-pending for manifest." --mode now
+    echo "supernote-sync: $NEW new file(s) downloaded to buffer, $UPDATED updated. Read .agent-pending for manifest."
     log "Agent wake triggered"
   fi
 else
