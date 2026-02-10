@@ -51,10 +51,14 @@ graph TD
 - **Key Change:** Decoupling from Home Assistant entity structures.
 
 ### Phase 2: Refactor Home Presence (`skills/home-presence`)
-**Goal:** Make `ha-bridge` a "dumb client" of the new service.
+**Goal:** Make `ha-bridge` a "dumb client" of the new service with a **Dynamic Watchlist**.
 - **Action:** Remove internal `interrupt-manager.js` from `ha-bridge.js`.
-- **New Logic:** `ha-bridge` simply forwards relevant state changes to `interrupt-service` via CLI/IPC.
-- **Result:** `ha-bridge` becomes lighter; interrupt logic is centralized.
+- **Dynamic Watchlist:** 
+    - `ha-bridge` must periodically (every 5 minutes) fetch the list of watched HA entities from the `interrupt-service`.
+    - `interrupt-service` must expose a way to query all `entity_id` values currently tied to active `ha.state_change` rules.
+    - When a rule is added/removed in `interrupt-service`, `ha-bridge` should eventually sync and update its forwarding filters.
+- **New Logic:** `ha-bridge` forwards ONLY the entities present in the dynamic watchlist to `interrupt-service`.
+- **Result:** No more hardcoded entity lists in the bridge; it is fully controlled by the active rules.
 
 ### Phase 3: The Semantic Filter
 **Reference:** [Detailed PRD](skills/priority-check/PRD.md)
@@ -79,7 +83,21 @@ graph TD
     - Checks for diffs.
     - Calls `interrupt-service`.
 
-## 4. Guiding Principles
+## 4. Interrupt Types & Validation
+
+To maintain system reliability, the architecture supports **Interrupt Types**. Each type defines its own validation logic to ensure that interrupts are not registered for non-existent or invalid resources.
+
+- **`generic`**: No validation. Used for ad-hoc system alerts or simple strings.
+- **`ha.state_change`**: Validated against Home Assistant. Uses the `home-presence` skill to verify that the `entity_id` exists in the current HA environment via MCP.
+
+### Validation Flow
+1. **Rule Registration**: User/Agent attempts to add a rule with a specific `source` type.
+2. **Validator Hook**: The `interrupt-service` looks up the validator script associated with that source.
+3. **Verification**: The validator script (e.g., `skills/home-presence/validate-entity.js`) is executed.
+4. **Enforcement**: If validation fails, the service rejects the rule and returns an error. No "ghost" interrupts are allowed for typed sources.
+
+## 5. Guiding Principles
 1.  **Reuse > Duplicate:** Don't write rate-limiting logic twice.
 2.  **Dumb Collectors:** Collectors should do minimum work (fetch & forward). Complexity lives in the Service/Check skills.
-3.  **Passive by Default:** The system runs silently in the background (systemd). The Agent (Magnus) is only woken when strictly necessary.
+3.  **Strict Validation**: Typed interrupts (like HA events) must be verified against their source of truth before activation.
+4.  **Passive by Default:** The system runs silently in the background (systemd). The Agent (Magnus) is only woken when strictly necessary.

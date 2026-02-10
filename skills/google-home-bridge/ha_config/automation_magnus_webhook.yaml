@@ -9,4 +9,5 @@
     - event: magnus_voice_command
       event_data:
         message: "{{ trigger.json.message }}"
+        # message: "{{ trigger.slots.message }}"
   mode: single

@@ -1,5 +1,15 @@
 [
   {
+    "id": "kitchen-occupancy-test",
+    "source": "ha.state_change",
+    "condition": {
+      "entity_id": "binary_sensor.everything_presence_lite_5c0db4_occupancy"
+    },
+    "action": "message",
+    "message": "Kitchen occupancy changed to {{new_state}}! Testing the new unified interrupt system.",
+    "enabled": true
+  },
+  {
     "id": "example-ha-motion",
     "source": "home-assistant",
     "condition": { "entity_id": "binary_sensor.front_door_motion", "state": "on" },
