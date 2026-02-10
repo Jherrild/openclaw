@@ -13,6 +13,8 @@ const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
 
+const { execFileSync } = require('child_process');
+
 const SKILL_DIR = __dirname;
 const RULES_FILE = path.join(SKILL_DIR, 'interrupt-rules.json');
 const SETTINGS_FILE = path.join(SKILL_DIR, 'settings.json');
@@ -69,7 +71,49 @@ function loadSettings() {
     message:  { ...DEFAULT_SETTINGS.message,  ...raw.message },
     subagent: { ...DEFAULT_SETTINGS.subagent, ...raw.subagent },
     log_limit: raw.log_limit ?? DEFAULT_SETTINGS.log_limit,
+    validators: raw.validators || {},
   };
+}
+
+// ── Rule Validation ─────────────────────────────────────────────────────────
+
+function extractValidationArg(rule) {
+  if (rule.source === 'ha.state_change') {
+    return rule.condition && rule.condition.entity_id ? rule.condition.entity_id : null;
+  }
+  return null;
+}
+
+function validateRule(rule) {
+  const settings = loadSettings();
+  const validatorScript = settings.validators[rule.source];
+  if (!validatorScript) return { valid: true };
+
+  const arg = extractValidationArg(rule);
+  if (!arg) {
+    return { valid: false, error: `Rule source '${rule.source}' requires a validatable field (e.g. entity_id in condition)` };
+  }
+
+  try {
+    execFileSync('node', [validatorScript, arg], {
+      timeout: 15000,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    return { valid: true };
+  } catch (err) {
+    let detail = err.message;
+    if (err.stderr) {
+      try {
+        const parsed = JSON.parse(err.stderr.toString());
+        detail = parsed.error || detail;
+      } catch { detail = err.stderr.toString().trim() || detail; }
+    }
+    return { valid: false, error: `Validation failed for '${arg}': ${detail}` };
+  }
+}
+
+function saveRules(rules) {
+  fs.writeFileSync(RULES_FILE, JSON.stringify(rules, null, 2) + '\n');
 }
 
 // ── Rules ───────────────────────────────────────────────────────────────────
@@ -340,9 +384,41 @@ function startServer() {
 
       // POST /reload — reload rules from disk
       if (req.method === 'POST' && req.url === '/reload') {
-        const rules = loadRules();
-        log('info', `Rules reloaded: ${rules.length} active rule(s)`);
-        return sendJson(200, { status: 'reloaded', rules: rules.length });
+        const allRules = readJson(RULES_FILE, []);
+        const errors = [];
+        for (const rule of allRules) {
+          if (rule.enabled === false) continue;
+          const result = validateRule(rule);
+          if (!result.valid) errors.push({ id: rule.id, error: result.error });
+        }
+        const active = loadRules();
+        log('info', `Rules reloaded: ${active.length} active rule(s), ${errors.length} validation error(s)`);
+        return sendJson(200, { status: 'reloaded', rules: active.length, validationErrors: errors });
+      }
+
+      // POST /add-rule — add a new rule with validation
+      if (req.method === 'POST' && req.url === '/add-rule') {
+        const rule = await parseBody(req);
+        if (!rule.id) return sendJson(400, { error: 'Missing required field: id' });
+        if (!rule.source) return sendJson(400, { error: 'Missing required field: source' });
+
+        const validation = validateRule(rule);
+        if (!validation.valid) {
+          log('warn', `Rule '${rule.id}' rejected: ${validation.error}`);
+          return sendJson(422, { error: validation.error, rule: rule.id });
+        }
+
+        const rules = readJson(RULES_FILE, []);
+        const existing = rules.findIndex(r => r.id === rule.id);
+        if (existing !== -1) {
+          rules[existing] = { ...rules[existing], ...rule };
+        } else {
+          if (rule.enabled === undefined) rule.enabled = true;
+          rules.push(rule);
+        }
+        saveRules(rules);
+        log('info', `Rule '${rule.id}' added/updated (source=${rule.source})`);
+        return sendJson(200, { status: 'added', rule: rule.id, validated: true });
       }
 
       sendJson(404, { error: 'Not found' });

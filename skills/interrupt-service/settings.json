@@ -10,5 +10,8 @@
     "rate_limit_max": 4,
     "rate_limit_window_ms": 60000
   },
-  "log_limit": 1000
+  "log_limit": 1000,
+  "validators": {
+    "ha.state_change": "/home/jherrild/.openclaw/workspace/skills/home-presence/validate-entity.js"
+  }
 }
