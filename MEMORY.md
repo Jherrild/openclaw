@@ -11,7 +11,6 @@
 - **MCP Preference Rule:**
   - **General:** Always prefer official MCP tools over custom-built skills or raw API calls.
   - **Fallback Protocol:** If an MCP tool fails or is unreachable, **ASK** before falling back to whatever custom skill, processes, or legacy/custom tools you might use to accomplish the same thing (filesystem tools).
-  - **Exception:** The MCP for obsidian is IN PROGRESS, it doesn't work well right now. For now, continue using obsidian-scribe as the primary skill for obsidian interaction, and let the user know that you aren't using the obsidian MCP until we get around to fixing it.
 
 - **Skill Creation Protocol (Strict):**
   1.  **Magnus (You):** Create the skill directory (`skills/<name>`).
@@ -75,16 +74,6 @@
   - **Hybrid Search:** Always use the `local-rag` tool (`search` and `query`) in addition to `grep` when searching for concepts or specific entities in the Obsidian vault.
   - **Pre-Creation Check:** Before creating a new note, use `local-rag` to check for existing relevant notes. Prefer updating an existing note over creating a duplicate, but never delete content from notes. Always make sure edits are targeted, and either add a new section, or append to an existing one.
   - **Tool Location:** `skills/local-rag/rag.js`.
-
-- **Obsidian (MCP Integration):**
-  - **STATUS** CURRENTLY DISABLED per our MCP preference rules above
-  - **Tool:** `mcporter call obsidian-bridge.<Tool>`
-  - **Capabilities:**
-    - **Smart Search:** `search_vault_smart(query="...")` (Semantic).
-    - **Context:** `get_active_file()` (What Jesten is looking at).
-    - **Templater:** `execute_template(...)` (Run native templates).
-    - **Patching:** `patch_vault_file(...)` (Surgical edits).
-  - **Configuration:** Stored in `config/mcporter.json` (pointing to `mcp-server-linux` binary).
 
 - **Home Assistant (MCP Integration):**
   - **Protocol:** Use `mcporter` CLI to interact with the Home Assistant MCP server (`ha-stdio-final`).

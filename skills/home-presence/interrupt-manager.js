@@ -146,31 +146,7 @@ class InterruptManager {
     console[level === 'error' ? 'error' : 'log'](line.trim());
   }
 
-  // ── Session Resolution & Logging ──────────────────────────────────────────
-
-  _getMainSessionId(callback) {
-    execFile(OPENCLAW_BIN, ['sessions', '--json'], (err, stdout, stderr) => {
-      let sessionId = null;
-      if (!err && stdout) {
-        try {
-          const data = JSON.parse(stdout);
-          // Find the main agent session (key: "agent:main:main")
-          const mainSession = (data.sessions || []).find(s => s.key === 'agent:main:main');
-          if (mainSession && mainSession.sessionId) {
-            sessionId = mainSession.sessionId;
-          }
-        } catch (e) {
-          this._statusLog('warn', `Failed to parse sessions list: ${e.message}`);
-        }
-      } else if (err) {
-        this._statusLog('warn', `Failed to list sessions: ${err.message}`);
-      }
-      if (!sessionId) {
-        this._statusLog('warn', `Could not resolve main session ID; falling back to agent routing`);
-      }
-      callback(sessionId);
-    });
-  }
+  // ── Logging ────────────────────────────────────────────────────────────────
 
   _logDispatchResult(cmdArgs, stdout, stderr) {
     const timestamp = new Date().toISOString();
@@ -344,48 +320,40 @@ class InterruptManager {
   }
 
   // ── Dispatch: Message Pipeline ──────────────────────────────────────────────
-  // Sends messages via `openclaw agent` routed to the main session.
+  // Injects system events into the Main Session via `openclaw system event`.
 
   _dispatchMessages(batch) {
-    this._statusLog('info', `[message] Dispatching ${batch.length} message interrupt(s)`);
-    const config = this._readConfig();
-    const channel = config.default_channel || 'telegram';
+    this._statusLog('info', `[message] Dispatching ${batch.length} message interrupt(s) via system event`);
 
-    this._getMainSessionId((mainSessionId) => {
-      let pending = batch.length;
-      let anyFailed = false;
+    let pending = batch.length;
+    let anyFailed = false;
 
-      for (const t of batch) {
-        const text = t.message || `${t.label}: ${t.new_state}`;
-        const args = ['message', 'send', '--channel', channel, '--message', text];
-        if (mainSessionId) {
-          // Route through agent session so context is preserved
-          args.push('--target', mainSessionId);
+    for (const t of batch) {
+      const text = t.message || `${t.label}: ${t.new_state}`;
+      const args = ['system', 'event', '--text', text, '--mode', 'now'];
+
+      this._statusLog('info', `[message] Injecting system event: openclaw ${args.join(' ')}`);
+      execFile(OPENCLAW_BIN, args, (err, stdout, stderr) => {
+        this._logDispatchResult(args, stdout, stderr);
+
+        if (err) {
+          anyFailed = true;
+          this._statusLog('error', `[message] Failed to inject event for '${t.label}': ${err.message}`);
+          if (stderr) this._statusLog('error', `[message]   stderr: ${stderr.trim()}`);
+        } else {
+          this._statusLog('info', `[message] Injected system event for '${t.label}'`);
         }
 
-        this._statusLog('info', `[message] Sending: openclaw ${args.join(' ')}`);
-        execFile(OPENCLAW_BIN, args, (err, stdout, stderr) => {
-          this._logDispatchResult(args, stdout, stderr);
-
-          if (err) {
-            anyFailed = true;
-            this._statusLog('error', `[message] Failed to send for '${t.label}': ${err.message}`);
-            if (stderr) this._statusLog('error', `[message]   stderr: ${stderr.trim()}`);
+        pending--;
+        if (pending === 0) {
+          if (anyFailed) {
+            this._restoreOneOffs(batch);
           } else {
-            this._statusLog('info', `[message] Sent message for '${t.label}'`);
+            this._finalizeOneOffs(batch);
           }
-
-          pending--;
-          if (pending === 0) {
-            if (anyFailed) {
-              this._restoreOneOffs(batch);
-            } else {
-              this._finalizeOneOffs(batch);
-            }
-          }
-        });
-      }
-    });
+        }
+      });
+    }
   }
 
   // ── Dispatch: Subagent Pipeline ───────────────────────────────────────────

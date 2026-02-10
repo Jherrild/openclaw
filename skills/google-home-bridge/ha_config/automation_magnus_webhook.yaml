@@ -1,55 +1,12 @@
-# Home Assistant Automation — Magnus Voice Bridge (Webhook)
-# -----------------------------------------------------------
-# Receives a POST from IFTTT (or any HTTP client) containing
-# a voice-transcribed message and forwards it to OpenClaw.
-#
-# Copy to: /config/automations.yaml (append) or add via the HA UI.
-#
-# Expected payload:  {"message": "I'm heading out, be back in an hour"}
-
 - id: magnus_voice_bridge_webhook
-  alias: "Magnus Voice Bridge (Webhook)"
-  description: >-
-    Receives webhook POSTs from IFTTT Google Assistant trigger
-    and forwards the extracted message to Magnus via OpenClaw.
+  alias: Magnus Voice Bridge (Webhook)
+  description: Forward voice messages from IFTTT/Webhook to Magnus via OpenClaw
   triggers:
     - trigger: webhook
       webhook_id: magnus-voice-bridge
-      allowed_methods:
-        - POST
       local_only: false
-  conditions:
-    - condition: template
-      value_template: >-
-        {{ trigger.json is defined
-           and trigger.json.message is defined
-           and trigger.json.message | length > 0 }}
   actions:
-    - variables:
-        raw_message: "{{ trigger.json.message | trim }}"
-        # Strip leading "tell magnus" prefix if IFTTT sends the full phrase
-        clean_message: >-
-          {% set m = raw_message | lower %}
-          {% if m.startswith('tell magnus that ') %}
-            {{ raw_message[17:] | trim }}
-          {% elif m.startswith('tell magnus ') %}
-            {{ raw_message[12:] | trim }}
-          {% elif m.startswith('ask magnus to ') %}
-            {{ raw_message[14:] | trim }}
-          {% elif m.startswith('send magnus ') %}
-            {{ raw_message[12:] | trim }}
-          {% elif m.startswith('message magnus ') %}
-            {{ raw_message[15:] | trim }}
-          {% else %}
-            {{ raw_message }}
-          {% endif %}
-    - action: event.fire
-      data:
-        event_type: magnus_voice_command
-        event_data:
-          message: "{{ clean_message }}"
-    - action: persistent_notification.create
-      data:
-        title: "🦁 Magnus Voice Bridge"
-        message: "Delivered to Magnus: {{ clean_message }}"
+    - event: magnus_voice_command
+      event_data:
+        message: "{{ trigger.json.message }}"
   mode: single
