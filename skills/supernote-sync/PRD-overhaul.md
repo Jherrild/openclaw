@@ -185,6 +185,19 @@ For each entry in the pending manifest:
 
 **For updated notes:** The mapping already exists; migrate overwrites in place.
 
+#### `vault_update`
+Updates the vault root path across all configuration. Used when the Obsidian vault moves to a new location (e.g., new machine, drive letter change, WSL path change).
+
+```
+vault_update --path <new-vault-root>
+```
+
+Updates:
+- The vault root used by `check-and-sync.sh` and all agent tools to resolve the mapping file location (`<vault>/metadata/supernote-sync-mapping.md`)
+- Stored in a config file within the skill directory (e.g., `supernote-sync/config.json` → `{ "vault_root": "/mnt/c/..." }`)
+
+**All other paths stay relative.** Because mapping paths are vault-relative (see §1.2), changing the vault root is a single config update — no rewriting of mapping entries needed.
+
 ### 3.2 Agent Workflow (documented in SKILL.md)
 
 When woken by interrupt:
@@ -224,6 +237,8 @@ Both must be in PATH for the sync script.
 | `supernote-sync/get_updated_notes.js` | NEW — Agent tool |
 | `supernote-sync/store_markdown.js` | NEW — Agent tool |
 | `supernote-sync/obsidian_migrate.js` | NEW — Agent tool |
+| `supernote-sync/vault_update.js` | NEW — Update vault root path |
+| `supernote-sync/config.json` | NEW — Stores vault_root |
 | `supernote-sync/SKILL.md` | Rewrite with new workflow |
 | `obsidian-scribe/move.js` | Move linked /documents/ files + update sync mapping |
 | `<vault>/metadata/supernote-sync-mapping.md` | NEW — YAML mapping in vault |
