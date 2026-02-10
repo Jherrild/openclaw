@@ -1,202 +1,183 @@
 # Supernote Google Drive Sync Skill
 
-Synchronizes `.note` files from Google Drive (Supernote backup folder) to the Obsidian vault with intelligent PARA categorization.
+Synchronizes `.note` files from Google Drive (Supernote backup folder) to the Obsidian vault with intelligent PARA categorization. Notes are converted to PDF + extracted text, then stored as Obsidian-native markdown with embedded PDFs.
 
 ## Overview
 
-- **check-and-sync.sh** runs every 10 minutes via cron and handles ALL Google Drive access
-- **Path A (Updated files):** Script downloads and places them at their mapped vault path automatically. Listed in manifest for your awareness — no action needed.
-- **Path B (New files):** Script downloads them to `buffer/` directory. **You** categorize and place them.
+- **check-and-sync.sh** runs every 10 minutes via systemd timer and handles ALL Google Drive access
+- **Path A (Updated files):** Script downloads, converts, and refreshes the buffer. Agent regenerates .md if needed.
+- **Path B (New files):** Script downloads and converts to `buffer/<NoteName>/`. Agent categorizes and files them.
 - **You never need Google Drive auth.** All files are local by the time you're woken.
 
 ## Triggers
 
 System event matching: `supernote-sync: ... new file(s) downloaded to buffer`
 
-When you receive this event, follow the **New File Processing** workflow below.
+When you receive this event, follow the **Agent Workflow** below.
 
-## New File Processing Workflow
+## Agent Workflow
 
-### 1. Read the Manifest
-
-The file `.agent-pending` contains a JSON manifest with two sections:
-```json
-{
-  "new": [
-    {"fileId": "1XFK...", "name": "PRD Driven Design.note", "modifiedTime": "2026-..."}
-  ],
-  "updated": [
-    {"fileId": "2YGL...", "name": "Journal.note", "modifiedTime": "2026-...", "localPath": "/path/in/vault/..."}
-  ]
-}
-```
-
-- **`new`** — Files that need your categorization. Already downloaded to `~/.openclaw/workspace/skills/supernote-sync/buffer/`
-- **`updated`** — Files already refreshed at their existing vault paths by the script. **No action needed** — informational only.
+### 1. Check What's New
 
 ```bash
 SKILL_DIR="$HOME/.openclaw/workspace/skills/supernote-sync"
-cat "$SKILL_DIR/.agent-pending" | jq .
-ls "$SKILL_DIR/buffer/"
+
+# Get new notes (need categorization)
+node "$SKILL_DIR/get_new_notes.js"
+
+# Get updated notes (already mapped, refreshed content)
+node "$SKILL_DIR/get_updated_notes.js"
 ```
 
-### 2. Categorize Each NEW File
+Both return JSON arrays with `fileId`, `name`, `text` (extracted content), `pdfPath`, and `modifiedTime`.
+Updated notes also include `mdPath` (existing vault location).
 
-Apply PARA heuristics based on filename and contents. For example:
+### 2. Process NEW Notes
+
+For each new note:
+1. **Read the text** — full extracted text is in the `text` field
+2. **Search the vault** for existing files with the same name:
+   ```bash
+   node ~/.openclaw/workspace/skills/local-rag/rag.js search "<note name>" /mnt/c/Users/Jherr/Documents/remote-personal
+   ```
+3. **Categorize** into a PARA location (see Categorization Heuristics below)
+4. **Set the mapping** with the chosen vault destination:
+   ```bash
+   node "$SKILL_DIR/mapping-utils.js" set "<fileId>" '{"name":"<Name>.note","mdPath":"<PARA-path>/<Name>.md","pdfPath":"<PARA-path>/documents/<Name>.pdf","modifiedTime":"<ts>"}'
+   ```
+5. **Generate markdown** with frontmatter, PDF embed, and extracted text:
+   ```bash
+   node "$SKILL_DIR/store_markdown.js" --file-id "<fileId>" --content "<markdown>"
+   ```
+
+   The .md file should follow this structure:
+   ```markdown
+   ---
+   tags: [supernote]
+   source: supernote-sync
+   fileId: <google-drive-file-id>
+   ---
+
+   # <Note Name>
+
+   ![[documents/<Note Name>.pdf]]
+
+   ---
+
+   <extracted text content>
+   ```
+
+### 3. Process UPDATED Notes
+
+For each updated note:
+1. **Read the text** — check if content has meaningfully changed
+2. **Generate markdown** with the updated text:
+   ```bash
+   node "$SKILL_DIR/store_markdown.js" --file-id "<fileId>" --content "<markdown>"
+   ```
+
+### 4. Migrate to Vault
+
+Once all notes have .md files in the buffer, migrate everything in one call:
+
+```bash
+node "$SKILL_DIR/obsidian_migrate.js"
+```
+
+This command:
+- Copies `.pdf` → `<vault-path>/documents/<NoteName>.pdf`
+- Copies `.md` → `<vault-path>/<NoteName>.md`
+- Updates the YAML mapping with `mdPath` + `pdfPath`
+- Cleans up buffer directories
+- Removes processed entries from `.agent-pending`
+
+**Dry run first** (optional): `node "$SKILL_DIR/obsidian_migrate.js" --dry-run`
+
+### 5. Done
+
+If all items migrated successfully, `.agent-pending` is automatically removed.
+If some items were skipped (missing .md or mapping), they remain in `.agent-pending` for the next run.
+
+## Categorization Heuristics
+
+Apply PARA heuristics based on filename and text content:
 
 | Pattern | Destination | Justification |
 |---------|-------------|---------------|
-| `Meeting*` | `.../2-Areas/meetings/` | Meetings and notes related to meetings |
-| `Board Meeting*` | `.../2-Areas/Home/` | This LOOKS like it's just a meeting, but because it mentions Board, you should reference what you know about Jesten. He's on the home owners board, so this is probably related to that, and should go in the 'Home' area |
-| `Bus renovation`, `Floor Install` | `.../1-Projects/Bus Renovation/` OR `.../2-Areas/Bus Renovation/` | This is tricky- Bus renovation sounds like a specific project, so it could go in Projects- but based on content, it could also be a generic reference for HOW to renovate a bus. Investigate content, and figure out which you think it is, asking for clarification in the main channel if you can't decide |
-| `Floor Install` | `.../1-Projects/Bus Renovation/` OR `.../2-Areas/Bus Renovation/` | Just like he example above, this is tricky- it sounds like a specific project, so it could go in Projects- but based on content, it could also be a generic reference for HOW to install a floor. Investigate content, and figure out which you think it is, asking for clarification in the main channel if you can't decide |
-| `Journal*`, `Daily*` | `.../2-Areas/Journal/YYYY/` | Daily or journal entries are a broad area |
-| `Draft*`, `Writing*` | `.../1-Projects/Writing/Drafts/` | Drafts or work-in-progress documents are probably writing related |
-| `Reference <AREA>*`, `Cheatsheet <AREA>*` | `.../3-Resources/<AREA>` | Reference materials and cheatsheets are resources. Words that imply a resource should also be filed into categories under resources |
-| `Interview*`, `Onboarding*` | `.../2-Areas/Career/` | Words semantically related to career or job probably go under 'Career' |
-| `GitHub <AREA>*` | `.../2-Areas/Career/` OR `.../1-Projects/GitHub/<AREA>` | GitHub is tricky- I work there, so it could be a career related area content, or an active project |
+| `Meeting*`, `Board Meeting*` | `.../2-Areas/Home/` or `.../2-Areas/meetings/` | Board = HOA board (Jesten is on it) |
+| `Journal*`, `Daily*` | `.../2-Areas/Journal/YYYY/` | Daily or journal entries |
+| `Interview*`, `Onboarding*` | `.../2-Areas/Career/` | Career-related content |
+| `GitHub*` | `.../2-Areas/Career/` or `.../1-Projects/GitHub/` | Jesten works at GitHub |
+| `Draft*`, `Writing*` | `.../1-Projects/Writing/Drafts/` | Work-in-progress documents |
+| `Reference*`, `Cheatsheet*` | `.../3-Resources/<Area>/` | Reference materials |
+| Uncertain | `.../3-Resources/Supernote/Inbox/` | Default; ask user for review |
 
-**If uncertain:** Do your best to figure out where this might live based on filename and content. Use the PARA acronym to decide- if the title or contents are semantically similar to a project, file it under projects. If it's more of a general area of focus, file it under areas. If it's a reference material, file it under resources. If you can't decide, default to `.../3-Resources/Supernote/Inbox/` and log the file for later review:
+**If uncertain:** Default to Inbox and ask: "New Supernote file: `<filename>`. Where should I file it?"
 
-> "New Supernote file: `<filename>`. Where should I file it? (default: Inbox)"
+## Tools Reference
 
-### 3. Update Mapping
-
-For each processed file, add it to `sync-mapping.json` using the `fileId` and `modifiedTime` from the manifest:
-```bash
-SKILL_DIR="$HOME/.openclaw/workspace/skills/supernote-sync"
-jq --arg id "$FILE_ID" \
-   --arg name "$REMOTE_NAME" \
-   --arg path "$DEST_PATH" \
-   --arg ts "$MODIFIED_TIME" \
-   '.files += [{"fileId": $id, "remoteName": $name, "localPath": $path, "lastModified": $ts}]' \
-   "$SKILL_DIR/sync-mapping.json" > "$SKILL_DIR/sync-mapping.tmp" && \
-   mv "$SKILL_DIR/sync-mapping.tmp" "$SKILL_DIR/sync-mapping.json"
-```
-
-### 4. Place in Vault (Using Obsidian Scribe)
-
-**IMPORTANT — Search before filing:** Use the `local-rag` skill to search the vault for an existing file with the same name before categorizing:
-
-```bash
-node ~/.openclaw/workspace/skills/local-rag/rag.js search "<filename without extension>" /mnt/c/Users/Jherr/Documents/remote-personal
-```
-
-- **If found:** Use that existing path as `DEST_PATH`. Skip the move — just update the mapping (step 3) so it's tracked going forward.
-- **If NOT found:** Use `scribe_move` (from `obsidian-scribe`) to place the file from the buffer into its PARA destination:
-
-```bash
-node ~/.openclaw/workspace/skills/obsidian-scribe/move.js "$HOME/.openclaw/workspace/skills/supernote-sync/buffer/$FILENAME" "$DEST_PATH"
-```
-
-This ensures directories are created and the move follows vault conventions.
-
-**Recovery note:** If the mapping was lost, check for `sync-mapping.json.bak` first — the cron script backs up the mapping before each run.
-
-### 5. Cleanup & Release Lock
-
-After processing ALL new files:
-```bash
-SKILL_DIR="$HOME/.openclaw/workspace/skills/supernote-sync"
-rm -rf "$SKILL_DIR/buffer"
-rm -f "$SKILL_DIR/.agent-pending"
-```
-
-**IMPORTANT:** Always remove `.agent-pending` when done, otherwise the cron script won't wake you for future new files.
-
-## Error Handling
-
-- **Categorization uncertain:** Default to Inbox path, log for review
-- **Move fails:** Create parent dirs with `mkdir -p`, retry once
-- **Always clean up:** Even on partial failure, remove `.agent-pending` lockfile so future runs aren't blocked
-
----
+| Tool | Usage | Purpose |
+|------|-------|---------|
+| `get_new_notes.js` | `node get_new_notes.js` | List new notes with text + PDF paths |
+| `get_updated_notes.js` | `node get_updated_notes.js` | List updated notes with text + vault paths |
+| `store_markdown.js` | `node store_markdown.js --file-id <id> --content "..."` | Write .md to buffer |
+| `obsidian_migrate.js` | `node obsidian_migrate.js [--dry-run]` | Move buffer → vault + update mapping |
+| `vault_update.js` | `node vault_update.js --path <root>` | Change vault root in config |
+| `mapping-utils.js` | `node mapping-utils.js <cmd> [args]` | Read/write/set/remove mapping entries |
 
 ## Operational Reference
 
 ### Auth & Token
 
-The sync script uses a shared Google OAuth token. You don't need this for normal operation (files are pre-downloaded), but if you're debugging script failures:
+The sync script uses a shared Google OAuth token. You don't need this for normal operation (files are pre-downloaded), but if debugging:
 
-- **Token location:** `~/.openclaw/workspace/skills/google-docs/scripts/token.json`
+- **Token:** `~/.openclaw/workspace/skills/google-docs/scripts/token.json`
 - **Credentials:** `~/.openclaw/workspace/skills/google-tasks/credentials.json`
 - **Node modules:** `~/.openclaw/workspace/skills/google-tasks/node_modules` (set via `NODE_PATH`)
-- **Google account:** `jestenh@gmail.com`
 - **Drive folder ID:** `19NabfLOmVIvqNZmI0PJYOwSLcPUSiLkK`
 
 ### Common Failure Modes
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| Script logs `ERROR: Failed to fetch remote state` | OAuth token expired or Ollama/Node not available | Check token: `cat ~/.openclaw/workspace/skills/google-docs/scripts/token.json`. If expired, re-auth via the google-docs skill's token refresh flow. |
-| Script runs but no system event fires | No new/updated files on Drive, or `.agent-pending` lockfile blocking | Check `sync.log` for details. If lock is stale: `rm -f ~/.openclaw/workspace/skills/supernote-sync/.agent-pending` |
-| Buffer is empty when you're woken | Script failed mid-download (network error, disk full) | Check `sync.log` for download errors. Re-run manually: `bash ~/.openclaw/workspace/skills/supernote-sync/check-and-sync.sh` |
-| `sync-mapping.json` is empty/corrupted | File was wiped or malformed JSON | Restore from backup: `cp ~/.openclaw/workspace/skills/supernote-sync/sync-mapping.json.bak ~/.openclaw/workspace/skills/supernote-sync/sync-mapping.json` |
-| You keep getting woken for the same files | You didn't remove `.agent-pending` after processing | Always `rm -f .agent-pending` in cleanup step, even on partial failure |
-| `scribe_move` fails with "file exists" | File already in vault (mapping was lost) | Use the existing vault path in the mapping instead of moving. Search with `local-rag` first. |
-| Cron job not firing | Cron disabled or gateway restarted without cron resuming | Check: `openclaw cron list`. Re-enable if needed (see below). |
-
-### Cron Job
-
-The cron job ID is `de964491-7282-4832-84c7-ffed7027dd5c`.
-
-Current config:
-- **Schedule:** Every 10 minutes (`everyMs: 600000`)
-- **Session:** Isolated (doesn't pollute main session history)
-- **Delivery:** `none` (silent — no message to user unless the script wakes you via system event)
-
-**Check status:**
-```bash
-openclaw cron list
-```
-
-**Re-create if missing:**
-```bash
-openclaw cron add \
-  --name "supernote-sync" \
-  --every "10m" \
-  --message "bash ~/.openclaw/workspace/skills/supernote-sync/check-and-sync.sh"
-```
-
-**Enable/disable:**
-```bash
-openclaw cron enable de964491-7282-4832-84c7-ffed7027dd5c
-openclaw cron disable de964491-7282-4832-84c7-ffed7027dd5c
-```
+| `get_new_notes` returns empty | No `.agent-pending` or no new files | Check `sync.log` for details |
+| `obsidian_migrate` skips items | Missing .md in buffer or no mapping entry | Run `store_markdown` and/or `mapping-utils.js set` first |
+| Script logs `ERROR: Failed to fetch remote state` | OAuth token expired | Re-auth via google-docs token refresh |
+| `.agent-pending` stale | Previous agent attempt failed | `rm -f .agent-pending` to unblock |
+| Mapping lost | File corruption | Check `supernote-sync-mapping.md.bak` in vault `metadata/` |
 
 ### Manual Commands
 
-**Trigger sync manually:**
 ```bash
-bash ~/.openclaw/workspace/skills/supernote-sync/check-and-sync.sh
-```
+SKILL_DIR="$HOME/.openclaw/workspace/skills/supernote-sync"
 
-**Clear agent lock (if stuck):**
-```bash
-rm -f ~/.openclaw/workspace/skills/supernote-sync/.agent-pending
-```
+# Trigger sync manually
+bash "$SKILL_DIR/check-and-sync.sh"
 
-**View recent log:**
-```bash
-tail -20 ~/.openclaw/workspace/skills/supernote-sync/sync.log
-```
+# Clear stale agent lock
+rm -f "$SKILL_DIR/.agent-pending"
 
-**Restore mapping from backup:**
-```bash
-cp ~/.openclaw/workspace/skills/supernote-sync/sync-mapping.json.bak ~/.openclaw/workspace/skills/supernote-sync/sync-mapping.json
+# View recent log
+tail -20 "$SKILL_DIR/sync.log"
+
+# Check mapping
+node "$SKILL_DIR/mapping-utils.js" read | jq .
 ```
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `check-and-sync.sh` | Cron script: downloads all files, updates known ones, buffers new ones |
-| `get_remote_state.js` | Node.js: lists remote `.note` files via googleapis (paginated) |
-| `download_file.js` | Node.js: downloads a file by ID via googleapis |
-| `sync-mapping.json` | Persistent file mapping (fileId → localPath) |
-| `sync-mapping.json.bak` | Auto-backup before each cron run |
-| `buffer/` | Pre-downloaded new files (created by script, cleaned up by you) |
-| `.agent-pending` | JSON manifest + lockfile (created by script, deleted by you) |
+| `check-and-sync.sh` | Systemd timer script: download, convert, buffer, wake agent |
+| `get_new_notes.js` | Agent tool: list new notes with text content |
+| `get_updated_notes.js` | Agent tool: list updated notes with vault paths |
+| `store_markdown.js` | Agent tool: write generated .md to buffer |
+| `obsidian_migrate.js` | Agent tool: migrate buffer → vault |
+| `vault_update.js` | Agent tool: update vault root path |
+| `mapping-utils.js` | YAML mapping read/write (CLI + module) |
+| `get_remote_state.js` | Node.js: list remote .note files via googleapis |
+| `download_file.js` | Node.js: download file by ID via googleapis |
+| `config.json` | Skill config (vault_root, tool paths) |
+| `buffer/` | Pre-downloaded + converted notes (temporary) |
+| `.agent-pending` | JSON manifest + lockfile (created by script, cleaned by migrate) |
 | `sync.log` | Rolling log (auto-rotates at 500 lines) |
-| `SKILL.md` | This file — your operating instructions |
-| `PRD.md` | Full requirements, design decisions, and change history |
