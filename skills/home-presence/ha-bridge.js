@@ -29,13 +29,74 @@ if (!TOKEN) {
   process.exit(1);
 }
 
-// ── High-Priority Wake Configuration ────────────────────────────────────────
-// Entities listed here will ALSO fire an `openclaw system event` to wake the
-// agent immediately. Leave empty to run in fully passive / log-only mode.
-// Example: ['person.jesten', 'binary_sensor.front_door_motion']
-const WAKE_ON_ENTITIES = new Set([
-  // (none — add entity IDs here to enable direct agent interrupts)
-]);
+// ── Dynamic Watchlist (synced from interrupt-service) ────────────────────────
+// Replaces the old hardcoded WAKE_ON_ENTITIES. Periodically fetches the list
+// of watched entity_ids from the interrupt-service's active ha.state_change
+// rules. Entities in this set are forwarded to the interrupt-service on change.
+const WATCHLIST = new Set();
+const WATCHLIST_SYNC_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+let watchlistSyncTimer = null;
+
+function syncWatchlist() {
+  const opts = {
+    hostname: '127.0.0.1',
+    port: INTERRUPT_SERVICE_PORT,
+    path: '/rules/ha-entities',
+    method: 'GET',
+    timeout: 5000,
+  };
+
+  const req = http.request(opts, (res) => {
+    let body = '';
+    res.on('data', chunk => { body += chunk; });
+    res.on('end', () => {
+      if (res.statusCode !== 200) {
+        log('error', `[watchlist] Sync failed — HTTP ${res.statusCode}: ${body}`);
+        return;
+      }
+      try {
+        const { entities } = JSON.parse(body);
+        if (!Array.isArray(entities)) throw new Error('Expected entities array');
+        const prev = new Set(WATCHLIST);
+        WATCHLIST.clear();
+        for (const e of entities) WATCHLIST.add(e);
+        const added = entities.filter(e => !prev.has(e));
+        const removed = [...prev].filter(e => !WATCHLIST.has(e));
+        if (added.length || removed.length) {
+          log('info', `[watchlist] Updated: ${WATCHLIST.size} entities (added=${added.length}, removed=${removed.length})`);
+        } else {
+          log('info', `[watchlist] Synced — ${WATCHLIST.size} entities (no changes)`);
+        }
+      } catch (err) {
+        log('error', `[watchlist] Failed to parse response: ${err.message}`);
+      }
+    });
+  });
+
+  req.on('error', (err) => {
+    if (err.code === 'ECONNREFUSED') {
+      log('error', '[watchlist] interrupt-service not running — will retry next cycle');
+    } else {
+      log('error', `[watchlist] Sync error: ${err.message}`);
+    }
+  });
+
+  req.on('timeout', () => { req.destroy(); });
+  req.end();
+}
+
+function startWatchlistSync() {
+  // Immediate sync on startup
+  syncWatchlist();
+  // Periodic sync every 5 minutes
+  watchlistSyncTimer = setInterval(syncWatchlist, WATCHLIST_SYNC_INTERVAL_MS);
+}
+
+// SIGUSR2 — manual watchlist sync trigger
+process.on('SIGUSR2', () => {
+  log('info', '[watchlist] SIGUSR2 received — forcing immediate sync');
+  syncWatchlist();
+});
 
 // ── Dynamic Entity Filter / Router ──────────────────────────────────────────
 // Each tier defines regex patterns matched against entity_id. An event is
@@ -398,8 +459,8 @@ function connect() {
         appendLog(logPath, entry);
         log('info', `[${tier.name}] ${eventText}`);
 
-        // Forward high-priority entities to interrupt service
-        if (WAKE_ON_ENTITIES.has(data.entity_id)) {
+        // Forward watched entities to interrupt service
+        if (WATCHLIST.has(data.entity_id)) {
           triggerInterrupt('ha.state_change', {
             entity_id: data.entity_id,
             old_state: oldState,
@@ -474,11 +535,10 @@ if (checkAlreadyRunning()) {
 log('info', 'Starting HA WebSocket bridge');
 log('info', `Log tiers: ${LOG_TIERS.map(t => t.name).join(', ')}`);
 log('info', `All logs capped at ${LOG_MAX_LINES} lines, stored in ${__dirname}`);
-log('info', WAKE_ON_ENTITIES.size > 0
-  ? `Wake-on entities: ${[...WAKE_ON_ENTITIES].join(', ')}`
-  : 'Running in passive log-only mode (no agent interrupts)');
 log('info', `Interrupt forwarding via interrupt-service on port ${INTERRUPT_SERVICE_PORT}`);
+log('info', 'Watchlist mode: dynamic (synced from interrupt-service every 5m, SIGUSR2 to force sync)');
 
+startWatchlistSync();
 connect();
 
 // Graceful shutdown
@@ -486,6 +546,7 @@ function shutdown(signal) {
   log('info', `Received ${signal} — shutting down`);
   shuttingDown = true;
   clearTimers();
+  if (watchlistSyncTimer) { clearInterval(watchlistSyncTimer); watchlistSyncTimer = null; }
   if (debugDumpTimer) { clearTimeout(debugDumpTimer); debugDumpTimer = null; }
   if (ws) {
     ws.close();

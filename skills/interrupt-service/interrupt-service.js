@@ -382,6 +382,17 @@ function startServer() {
         return sendJson(200, { status: 'ok', pid: process.pid });
       }
 
+      // GET /rules/ha-entities — return unique entity_ids from active ha.state_change rules
+      if (req.method === 'GET' && req.url === '/rules/ha-entities') {
+        const rules = loadRules();
+        const entities = [...new Set(
+          rules
+            .filter(r => r.source === 'ha.state_change' && r.condition && r.condition.entity_id)
+            .map(r => r.condition.entity_id)
+        )];
+        return sendJson(200, { entities });
+      }
+
       // POST /reload — reload rules from disk
       if (req.method === 'POST' && req.url === '/reload') {
         const allRules = readJson(RULES_FILE, []);
