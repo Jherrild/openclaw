@@ -23,7 +23,8 @@ const TTS_ENTITY   = 'tts.google_ai_tts';
 const TTS_VOICE    = 'alnilam';
 const DEFAULT_AREA = 'Living Room';
 const CO2_OCCUPIED_THRESHOLD = 600; // ppm – above this suggests someone is present
-const LAYOUT_PATH  = path.join(__dirname, 'layout.json');
+const LAYOUT_PATH    = path.join(__dirname, 'layout.json');
+const SETTINGS_PATH  = path.join(__dirname, 'settings.json');
 
 // Person entities to check for home/away status
 const PERSON_ENTITIES = ['person.jesten', 'person.april_jane'];
@@ -84,6 +85,20 @@ function loadLayout() {
 }
 
 const layout = loadLayout();
+
+// ── Settings (preferred areas) ─────────────────────────────────────────────────
+
+function loadSettings() {
+  try {
+    return JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
+function saveSettings(settings) {
+  fs.writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2) + '\n');
+}
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -247,7 +262,22 @@ async function followAndSpeak(message, { priority = false } = {}) {
     console.log(JSON.stringify(output, null, 2));
     return output;
   } else if (presence.occupied.length > 0) {
-    targetAreas = presence.occupied;
+    // Apply preferred_areas priority when multiple rooms are occupied
+    const settings = loadSettings();
+    const preferred = Array.isArray(settings.preferred_areas) ? settings.preferred_areas : [];
+    if (presence.occupied.length > 1 && preferred.length > 0) {
+      const occupiedLower = presence.occupied.map(a => a.toLowerCase());
+      const match = preferred.find(p => occupiedLower.includes(p.toLowerCase()));
+      if (match) {
+        // Use the original-cased area name from the occupied list
+        const idx = occupiedLower.indexOf(match.toLowerCase());
+        targetAreas = [presence.occupied[idx]];
+      } else {
+        targetAreas = presence.occupied;
+      }
+    } else {
+      targetAreas = presence.occupied;
+    }
   } else {
     targetAreas = [DEFAULT_AREA];
   }
@@ -419,8 +449,22 @@ const [,, command, ...args] = process.argv;
         await updateLayout();
         break;
 
+      case 'set-preference': {
+        const input = args.join(' ');
+        if (!input) {
+          console.error('Usage: presence.js set-preference "Office,Gym,Bedroom"');
+          process.exit(1);
+        }
+        const newPreferred = input.split(',').map(s => s.trim()).filter(Boolean);
+        const settings = loadSettings();
+        settings.preferred_areas = newPreferred;
+        saveSettings(settings);
+        console.log(JSON.stringify({ status: 'ok', preferred_areas: newPreferred }));
+        break;
+      }
+
       default:
-        console.error('Commands: locate | announce <area> <message> | follow-and-speak [--priority] <message> | update-layout');
+        console.error('Commands: locate | announce <area> <message> | follow-and-speak [--priority] <message> | update-layout | set-preference <areas>');
         process.exit(1);
     }
   } catch (err) {
