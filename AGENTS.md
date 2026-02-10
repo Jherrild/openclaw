@@ -26,7 +26,9 @@ Before executing any task that involves **Reading**, **Summarizing**, **Searchin
 2.  **Offer:** If YES, ask: "This involves heavy reading/context. Shall I spawn a sub-agent to handle it cheaply?"
 3.  **Default:** If the user agrees (or established preference implies it), use `sessions_spawn` (Gemini Flash or equivalent).
 
-*Exception:* Atomic actions (move file, write known text, delete) should be done directly to avoid the overhead of spawning a new agent.
+*Exceptions:* 
+- Atomic actions (move file, write known text, delete) should be done directly to avoid the overhead of spawning a new agent.
+- **Coding Override:** If the "heavy reading" is a prerequisite for a coding task (logic, refactoring, or debugging), **DO NOT** spawn a sub-agent. Call `copilot-delegate` directly from the Main Session. The delegation to Copilot already handles the cost/context optimization, and keeping it in the Main Session ensures verifiable execution.
 
 ## ⛔ FORBIDDEN ACTIONS (Strict)
 
@@ -59,7 +61,8 @@ You MUST NOT perform coding, large refactors, or complex technical documentation
 **Delegate Protocol:**
 1.  **Stop:** Do not write the code yourself.
 2.  **Delegate:** Execute `copilot-lock.sh` with a detailed prompt and the MANDATORY summary/auto-commit directives (see `skills/copilot-delegate/SKILL.md`).
-3.  **Verify:** Check `last-result.md` and `git log` to confirm success.
+3.  **Single Delegation:** Never "double-delegate" coding tasks (e.g., spawning a sub-agent to call Copilot). Magnus must initiate all `copilot-delegate` runs from the Main Session to maintain the integrity of the `last-result.md` and git trail.
+4.  **Verify:** Check `last-result.md` and `git log` to confirm success.
 
 **Why?**
 - Keeps Main Session lightweight.

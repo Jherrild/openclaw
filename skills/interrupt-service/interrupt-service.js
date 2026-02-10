@@ -373,7 +373,7 @@ function dispatchMessages(batch) {
 
   for (const t of batch) {
     const text = t.message || `${t.label}: ${JSON.stringify(t.data)}`;
-    const args = ['system', 'event', '--text', text, '--mode', 'now'];
+    const args = ['system', 'event', '--text', text, '--mode', 'now', '--session-id', 'agent:main:main'];
 
     log('info', `[message] Injecting: openclaw ${args.join(' ')}`);
     execFile(OPENCLAW_BIN, args, (err, stdout, stderr) => {
@@ -440,7 +440,7 @@ YOUR GOAL:
 3. DECIDE: Does the user need to be notified?
 
 IF NOTIFICATION IS NEEDED:
-- Send a message using: openclaw message send --channel ${group.channel} --message "Your message here"
+- Use the 'message' tool (action='send') to deliver the notification.
 
 IF NO NOTIFICATION IS NEEDED:
 - Exit silently.
@@ -450,7 +450,7 @@ CRITICAL:
 - Only notify if the condition is truly met and important.
 - Do NOT simply echo the interrupt; add value or verify context.`;
 
-    const args = ['agent', '--local', '--message', prompt];
+    const args = ['agent', '--local', '--message', prompt, '--session-id', 'agent:main:main'];
 
     log('info', `[subagent] Spawning sub-agent for group ${key} (${group.triggers.length} interrupt(s))`);
     execFile(OPENCLAW_BIN, args, { timeout: 120000 }, (err, stdout, stderr) => {

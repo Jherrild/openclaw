@@ -41,5 +41,20 @@
     "action": "subagent",
     "instruction": "Summarize the email and decide if urgent.",
     "enabled": false
+  },
+  {
+    "id": "rule-mlg8h2im-hfwx",
+    "source": "ha.state_change",
+    "condition": {
+      "entity_id": "binary_sensor.everything_presence_lite_4f1008_occupancy",
+      "state": "off"
+    },
+    "action": "message",
+    "channel": "default",
+    "session_id": "main",
+    "enabled": true,
+    "label": "Jesten left the office",
+    "message": "Office is now vacant; Jesten has left the room.",
+    "one_off": true
   }
 ]
