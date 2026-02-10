@@ -37,6 +37,7 @@
 | `supernote-sync` | Supernote -> Obsidian | `check-and-sync.sh` | Syncing `.note` files from Google Drive to the Obsidian PARA vault. **Mapping:** `skills/supernote-sync/sync-mapping.json`. |
 | `expert-check` | High-IQ Reasoning | `sessions_spawn` (Gemini Pro) | Double-checking complex logic, analysis, or architecture decisions. |
 | `google-docs` | Doc Management | `docs.js search/create/append` | Managing content in Google Documents (Drive). |
+| `interrupt-service` | Event Orchestration | `interrupt-cli.js add/trigger` | Scheduling asynchronous alerts and agent-wake triggers. |
 
 - **Search Protocol:** Always use `local-rag` and `memory_search` before creating new notes or answering history questions.
 - **Filing Rule:** Financial documents (bills/taxes) ALWAYS go to `2-Areas/Finance/` regardless of subject.
@@ -50,18 +51,30 @@
   - **Missed Items:** Assume all sent documents need filing. Missing one is a failure.
   - **Sub-agents:** ALWAYS delegate document analysis/OCR to a sub-agent ("Silent Document Trigger").
 
-- **Home Presence & Status Awareness:**
-  - **Presence Detection:** Uses Everything Presence Lite (mmWave) and CO2 fallback via the `home-presence` skill.
-  - **HA Bridge:** A persistent `systemd` user service (`ha-bridge.service`) maintains an outbound WebSocket connection to Home Assistant.
-  - **Passive Logging:** All presence events (occupancy, motion, person status) are logged to `skills/home-presence/presence-log.jsonl` (rolling 5,000 lines).
-  - **Capabilities:**
-    - **Primary Home Resource:** This log is the authoritative source for the recent state of the home. Magnus should check it first for any questions regarding home status, movement, or sensor history.
-    - **Context Awareness:** Magnus can query the JSONL log to answer questions about recent movement or state changes without waking for every event.
-    - **Selective Wake:** The bridge supports a `WAKE_ON_ENTITIES` list for high-priority alerts (currently empty).
-    - **Speech:** Can speak through local speakers using Google AI TTS (Alnilam voice).
-  - **Limited Coverage:** Presence detection is NOT house-wide.
-  - **High Priority/Important:** Use "Home Group" (broadcast to all) to ensure delivery.
-  - **Low/Medium Priority:** If no mmWave presence is detected, default to "Living Room".
+- **Interrupt & Notification Protocol:**
+  - **The Goal:** Use the `interrupt-service` as a buffer to prevent unnecessary agent wakes.
+  - **Usage:** Use this for ANY system-level daemon (Supernote sync, HA Bridge, Mail Sentinel) or long-running task that doesn't require immediate intervention.
+  - **Behavior:** The service will only wake/notify an agent if the event matches pre-determined high-priority criteria.
+  - **Rules:**
+    - **Creation:** ALL home-based or background notifications/alerts MUST be created as interrupts via `interrupt-cli.js`.
+    - **Duration Logic:** 
+        - "The **next time** X happens" → Use `--one-off` flag.
+        - "**Whenever** X happens" → Persistent rule (default).
+    - **Actions:** Use `action: subagent` to analyze and decide on notification for complex events; use `action: message` for simple system alerts.
+    - **Discovery:** To inform interrupt conditions (finding the exact event JSON), check the specialized logs in `skills/home-presence/`.
+
+- **Home Assistant & Presence Protocol:**
+  - **Goal:** Accurate home awareness and reliable physical presence (voice).
+  - **Tool Hierarchy (Observation/Questions):**
+    1. **`home-presence` (Skill):** Use `presence.js locate` first for occupancy and person status.
+    2. **HA MCP (`ha-stdio-final`):** Use `GetLiveContext` for real-time device states (lights, climate, media) not covered by `home-presence`.
+    3. **Logs (`skills/home-presence/`):** Inspect JSONL logs for historical context or specific event details.
+  - **Tool Hierarchy (Actions):**
+    1. **`home-presence` (Skill):** Use `follow-and-speak` or `announce` for all voice output.
+    2. **HA MCP (`ha-stdio-final`):** Use for controlling devices (lights, switches, scenes) or running scripts.
+  - **Log Strategy:**
+    - Prefer domain-specific logs: `presence-log.jsonl`, `lighting-log.jsonl`, `climate-log.jsonl`, `automation-log.jsonl`.
+    - Fallback: Check `home-status-raw.jsonl` if the domain is ambiguous or nothing is found in the others.
 
 - **Solar Project:**
   - Goal: Net-positive cash flow using 15kW array + 30kWh battery.
@@ -74,17 +87,6 @@
   - **Hybrid Search:** Always use the `local-rag` tool (`search` and `query`) in addition to `grep` when searching for concepts or specific entities in the Obsidian vault.
   - **Pre-Creation Check:** Before creating a new note, use `local-rag` to check for existing relevant notes. Prefer updating an existing note over creating a duplicate, but never delete content from notes. Always make sure edits are targeted, and either add a new section, or append to an existing one.
   - **Tool Location:** `skills/local-rag/rag.js`.
-
-- **Home Assistant (MCP Integration):**
-  - **Protocol:** Use `mcporter` CLI to interact with the Home Assistant MCP server (`ha-stdio-final`).
-  - **Triggers:** Any request to Check State, Control Devices, Run Scripts, or Manage Media in the home.
-  - **Usage:**
-    - **Check State:** `mcporter call ha-stdio-final.GetLiveContext`
-    - **Control:** `mcporter call ha-stdio-final.HassTurnOn(name="...", area="...")` (Use semantic args like Area/Domain over entity_ids).
-    - **Media:** `mcporter call ha-stdio-final.HassMediaSearchAndPlay(...)`
-    - **Scripts:** Call exposed scripts directly (e.g., `turn_on_sunday_coffee`).
-  - **Configuration:** Stored in `config/mcporter.json`. Auth is handled via a Long-Lived Token.
-  - **Constraint:** Do NOT build custom HA tools or use `copilot` for HA control. Use the native MCP bridge via `exec`.
 
 - **Coffee Roasting Protocol:**
   - **Trigger:** Jesten starts/finishes a coffee roast.

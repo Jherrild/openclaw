@@ -12,3 +12,4 @@ skills/**/*.log
 skills/**/*.log.bak
 skills/**/node_modules/*
 images/*
+skills/supernote-sync/buffer/*

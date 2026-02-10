@@ -55,18 +55,19 @@ async function authorize() {
     scope: SCOPES,
   });
 
-  console.log('Authorize this app by visiting this url:', authUrl);
-  
   const code = process.argv.find(arg => arg.startsWith('--code='));
-  if (!code) {
+  if (!code && !client) {
+    console.log('Authorize this app by visiting this url:', authUrl);
     console.log('Restart script with --code=YOUR_CODE_HERE');
     process.exit(0);
   }
   
-  const {tokens} = await oAuth2Client.getToken(code.split('=')[1]);
-  oAuth2Client.setCredentials(tokens);
-  await saveCredentials(oAuth2Client);
-  return oAuth2Client;
+  if (code) {
+    const {tokens} = await oAuth2Client.getToken(code.split('=')[1]);
+    oAuth2Client.setCredentials(tokens);
+    await saveCredentials(oAuth2Client);
+    return oAuth2Client;
+  }
 }
 
 async function listTaskLists(auth) {
