@@ -2,7 +2,10 @@
   {
     "id": "int-mlehw1k2-1qa8",
     "source": "ha.state_change",
-    "condition": { "entity_id": "person.april_jane", "new_state": "home" },
+    "condition": {
+      "entity_id": "person.april_jane",
+      "new_state": "home"
+    },
     "action": "subagent",
     "label": "April Jane Arrived (30m Debounce)",
     "message": null,
@@ -16,7 +19,9 @@
   {
     "id": "int-mley78rc-44v2",
     "source": "ha.state_change",
-    "condition": { "entity_id": "magnus.voice_command" },
+    "condition": {
+      "entity_id": "magnus.voice_command"
+    },
     "action": "message",
     "label": "🦁 Voice",
     "message": "{{new_state}}",
@@ -28,23 +33,11 @@
     "created": "2026-02-09T09:06:50.520Z"
   },
   {
-    "id": "int-mlfikcpi-wax4",
-    "source": "ha.state_change",
-    "condition": { "entity_id": "light.office_lights" },
-    "action": "subagent",
-    "label": "Office Light Toggle Greeting",
-    "message": null,
-    "instruction": "Jesten toggled the office lights. Greet him warmly on the office speaker ('Hello Jesten, I see the lights are back on!') using the follow-and-speak tool. This is a one-off test.",
-    "channel": "default",
-    "session_id": "main",
-    "one_off": true,
-    "enabled": true,
-    "created": "2026-02-09T18:36:54.486Z"
-  },
-  {
     "id": "example-email-priority",
     "source": "email",
-    "condition": { "priority": true },
+    "condition": {
+      "priority": true
+    },
     "action": "subagent",
     "instruction": "Summarize the email and decide if urgent.",
     "enabled": false
