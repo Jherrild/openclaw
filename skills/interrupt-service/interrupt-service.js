@@ -113,6 +113,8 @@ function extractValidationArg(rule) {
 }
 
 function validateRule(rule) {
+  if (rule.skip_validation) return { valid: true };
+
   const settings = loadSettings();
   const validatorScript = settings.validators[rule.source];
   if (!validatorScript) return { valid: true };
@@ -121,6 +123,9 @@ function validateRule(rule) {
   if (!arg) {
     return { valid: false, error: `Rule source '${rule.source}' requires a validatable field (e.g. entity_id in condition)` };
   }
+
+  // Skip validation for wildcards and virtual entities
+  if (arg.includes('*') || arg.startsWith('magnus.')) return { valid: true };
 
   try {
     execFileSync('node', [validatorScript, arg], {
@@ -494,11 +499,17 @@ async function handleAddRule(req, sendJson) {
   if (!rule.id) return sendJson(400, { error: 'Missing required field: id' });
   if (!rule.source) return sendJson(400, { error: 'Missing required field: source' });
 
+  // Support skip_validation from query param or body
+  if (req._skipValidation) rule.skip_validation = true;
+
   const validation = validateRule(rule);
   if (!validation.valid) {
     log('warn', `Rule '${rule.id}' rejected: ${validation.error}`);
     return sendJson(422, { error: validation.error, rule: rule.id });
   }
+
+  // Strip transient fields before persisting
+  delete rule.skip_validation;
 
   const rules = readJson(RULES_FILE, []);
   const existing = rules.findIndex(r => r.id === rule.id);
@@ -590,7 +601,11 @@ function startServer() {
       }
 
       // POST /rules — add/update a rule (new canonical endpoint)
-      if (req.method === 'POST' && req.url === '/rules') {
+      if (req.method === 'POST' && (req.url === '/rules' || req.url.startsWith('/rules?'))) {
+        // Pass skip_validation query param into the rule body for validateRule()
+        if (req.url.includes('skip_validation=1')) {
+          req._skipValidation = true;
+        }
         return handleAddRule(req, sendJson);
       }
 
