@@ -125,6 +125,10 @@ node /home/jherrild/.openclaw/workspace/skills/obsidian-scribe/append.js "<path>
 
 Moves a note to a new location. Creates destination directories if needed.
 
+**Document co-movement:** When moving a `.md` file, `scribe_move` automatically scans for `![[documents/...]]` links in the content. Any linked files found in the source `documents/` subfolder are moved to `<destination>/documents/` alongside the note. Empty source `documents/` directories are cleaned up.
+
+**Sync mapping update:** If the moved file is tracked by `supernote-sync`, the YAML mapping (`<vault>/metadata/supernote-sync-mapping.md`) is automatically updated with the new `mdPath` and `pdfPath`.
+
 **Parameters:**
 - `source`: Source file path (Relative to Vault or Absolute).
 - `destination`: Destination path (Relative to Vault or Absolute).

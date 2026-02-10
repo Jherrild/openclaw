@@ -1,7 +1,7 @@
 # PRD: Supernote Google Drive Sync (v3 - Hybrid Intelligent Sync)
 
-> **Last updated:** 2026-02-07
-> **Status:** Operational with fixes applied. Initial sync of 25 files pending agent categorization.
+> **Last updated:** 2026-02-10
+> **Status:** Superseded by `PRD-overhaul.md` (Stages 1–3). The mapping is now YAML-based in the vault, .note files are converted to PDF+text, and agent tools (`get_new_notes`, `store_markdown`, `obsidian_migrate`) replace the manual workflow. This PRD is preserved for historical reference.
 
 ## Goal
 Automate the synchronization of `.note` files from Google Drive to the Obsidian vault with intelligent, agent-assisted placement for new files and low-overhead updates for known files.

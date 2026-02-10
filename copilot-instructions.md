@@ -44,9 +44,9 @@ The authoritative skill for all Obsidian vault operations — creating, moving, 
 - **Vault path:** `/mnt/c/Users/Jherr/Documents/remote-personal/`
 
 ### supernote-sync
-Synchronizes Supernote `.note` files from Google Drive to the Obsidian vault. Cron script handles all Google Drive access; agent only works with pre-downloaded local files.
-- **Scripts:** `check-and-sync.sh` (cron target), `get_remote_state.js` (list files), `download_file.js` (download by ID)
-- **Key data:** `sync-mapping.json` (file ID → vault path), `.agent-pending` (manifest/lockfile), `buffer/` (pre-downloaded files)
+Synchronizes Supernote `.note` files from Google Drive to the Obsidian vault. Converts `.note` → PDF + extracted text, then stores as Obsidian-native markdown with embedded PDFs. Systemd timer script handles all Google Drive access; agent only works with pre-downloaded local files.
+- **Scripts:** `check-and-sync.sh` (systemd timer target), `get_new_notes.js` (list new notes with text), `get_updated_notes.js` (list updated notes), `store_markdown.js` (write agent .md to buffer), `obsidian_migrate.js` (buffer → vault migration), `vault_update.js` (change vault root), `mapping-utils.js` (YAML mapping CLI + module)
+- **Key data:** `<vault>/metadata/supernote-sync-mapping.md` (YAML mapping: file ID → vault paths), `.agent-pending` (manifest/lockfile), `buffer/` (pre-downloaded + converted note directories)
 - **Dependencies:** `google-tasks` (node_modules), `google-docs` (OAuth token), `obsidian-scribe` (file placement), `local-rag` (vault search)
 
 ### copilot-delegate
