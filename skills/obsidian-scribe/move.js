@@ -5,7 +5,10 @@ const { resolveVaultPath, parseArgs, log } = require('./lib/utils');
 const { updateMapping } = require('./lib/sync-mapping');
 
 /**
- * scribe_move - Move a note to a new location
+ * scribe_move - Move a note to a new location.
+ * If the note has linked documents (e.g. PDFs in a sibling documents/ folder),
+ * those are moved too and the supernote sync mapping is updated.
+ *
  * Usage: node move.js <source_path> <target_path>
  */
 
@@ -43,7 +46,7 @@ if (fs.existsSync(finalDestPath)) {
     }
 }
 
-// 3. Move
+// 3. Move the primary file
 try {
     if (!fs.existsSync(targetDir)) {
         fs.mkdirSync(targetDir, { recursive: true });
@@ -55,14 +58,70 @@ try {
     process.exit(1);
 }
 
-// 4. Update Supernote sync mapping (best-effort)
+// 4. Move linked documents (e.g. PDFs in documents/ subfolder)
+let movedPdfPath = null;
+if (path.extname(finalDestPath).toLowerCase() === '.md') {
+    try {
+        const content = fs.readFileSync(finalDestPath, 'utf8');
+        const docLinks = [];
+        const linkRegex = /!\[\[documents\/([^\]]+)\]\]/g;
+        let match;
+        while ((match = linkRegex.exec(content)) !== null) {
+            docLinks.push(match[1]);
+        }
+
+        if (docLinks.length > 0) {
+            const sourceDocsDir = path.join(path.dirname(sourcePath), 'documents');
+            const targetDocsDir = path.join(path.dirname(finalDestPath), 'documents');
+
+            for (const docName of docLinks) {
+                const docSource = path.join(sourceDocsDir, docName);
+                const docTarget = path.join(targetDocsDir, docName);
+
+                if (fs.existsSync(docSource)) {
+                    if (!fs.existsSync(targetDocsDir)) {
+                        fs.mkdirSync(targetDocsDir, { recursive: true });
+                    }
+                    fs.renameSync(docSource, docTarget);
+                    log.success(`Moved document: ${docSource} -> ${docTarget}`);
+                    if (docName.endsWith('.pdf')) {
+                        movedPdfPath = docTarget;
+                    }
+                }
+            }
+
+            // Clean up empty source documents/ directory
+            if (fs.existsSync(sourceDocsDir)) {
+                try {
+                    const remaining = fs.readdirSync(sourceDocsDir);
+                    if (remaining.length === 0) {
+                        fs.rmdirSync(sourceDocsDir);
+                        log.info(`Removed empty directory: ${sourceDocsDir}`);
+                    }
+                } catch (e) {
+                    // non-critical
+                }
+            }
+        }
+    } catch (e) {
+        log.warn(`Document move scan failed: ${e.message}`);
+    }
+}
+
+// 5. Update Supernote sync mapping (best-effort)
 try {
-    updateMapping({ fileId: null, localPath: finalDestPath, oldPath: sourcePath });
+    updateMapping({
+        fileId: null,
+        localPath: finalDestPath,
+        oldPath: sourcePath,
+        newPdfPath: movedPdfPath,
+        oldPdfPath: null,
+    });
 } catch (e) {
     log.warn(`Sync mapping update failed: ${e.message}`);
 }
 
-// 5. Run Linter (ONLY for Markdown files)
+// 6. Run Linter (ONLY for Markdown files)
 if (path.extname(finalDestPath).toLowerCase() === '.md') {
     try {
         const lintScript = path.join(__dirname, 'lint.js');
@@ -74,7 +133,7 @@ if (path.extname(finalDestPath).toLowerCase() === '.md') {
     log.info('Skipping linter for non-markdown file.');
 }
 
-// 6. Fire-and-forget: update local-rag index for new location
+// 7. Fire-and-forget: update local-rag index for new location
 try {
     const ragScript = path.join(__dirname, '..', 'local-rag', 'rag.js');
     const child = spawn('node', [ragScript, 'index', finalDestPath], { detached: true, stdio: 'ignore' });

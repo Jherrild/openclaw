@@ -142,6 +142,14 @@ function removeEntry(entries, fileId) {
   return entries.filter(e => e.fileId !== fileId);
 }
 
+function findByPath(entries, vaultRelativePath) {
+  return entries.find(e =>
+    e.localPath === vaultRelativePath ||
+    e.mdPath === vaultRelativePath ||
+    e.pdfPath === vaultRelativePath
+  ) || null;
+}
+
 // ── Migration from old JSON format ──────────────────────────────────────────
 
 function migrateFromJson(jsonPath, vaultRoot) {
@@ -183,6 +191,7 @@ module.exports = {
   readMapping,
   writeMapping,
   findByFileId,
+  findByPath,
   upsertEntry,
   removeEntry,
   migrateFromJson,
