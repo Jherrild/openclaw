@@ -38,9 +38,8 @@
         - "tell magnus that {message}"
         - "say to magnus {message}"
   actions:
-    - action: event.fire
-      data:
-        event_type: magnus_voice_command
-        event_data:
-          message: "{{ trigger.slots.message }}"
+    - event: magnus_voice_command
+      event_data:
+        message: "{{ trigger.slots.message }}"
   mode: single
+

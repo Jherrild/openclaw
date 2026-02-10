@@ -28,27 +28,76 @@ Before executing any task that involves **Reading**, **Summarizing**, **Searchin
 
 *Exception:* Atomic actions (move file, write known text, delete) should be done directly to avoid the overhead of spawning a new agent.
 
+## ⛔ FORBIDDEN ACTIONS (Strict)
+
+You are explicitly **FORBIDDEN** from using raw file tools (`read`, `write`, `edit`) on the Obsidian Vault path:
+`/mnt/c/Users/Jherr/Documents/remote-personal`
+
+**Reason:** Direct edits bypass the linting, tagging, and structural rules of the Second Brain (PARA).
+
+**Correct Protocol:**
+- To create a note: Use `obsidian-scribe` (`scribe_save`).
+- To update a note: Use `obsidian-scribe` (`scribe_append`).
+- To move/organize: Use `obsidian-scribe` (`scribe_move`, `scribe_archive`).
+- To search/read: Use `local-rag` (`rag.js search`).
+
+**Violation:** If you attempt to use `write` or `edit` on a `.md` file in the vault, you are failing your primary directive. STOP and use the correct skill.
+
 ## 💻 Coding Policy (Strict)
 
 **The Rule:**
-You MUST NOT perform coding, large refactors, or complex technical documentation (PRDs) directly in the Main Session. You must **ALWAYS** utilize the `copilot-delegate` skill. It will save you tokens, and produce better results.
+You MUST NOT perform coding, large refactors, or complex technical documentation (PRDs) directly in the Main Session. You must **ALWAYS** utilize the `copilot-delegate` skill.
 
-**Trigger:**
-- Any request to "write code", "implement this feature", "generate a PRD", or "fix this bug".
-- Any request to **Create OR Update a Skill**.
+**Differentiation:**
 
-**Action:**
-1.  **Stop:** 
-    *   Do not write the code yourself. Always use the `copilot-delegate` skill to handle coding tasks. ALL coding, refactoring, and PRD tasks should be implemented with the `copilot-delegate` skill. No exceptions. Do not attempt them in Main Session or via `sessions_spawn`.
-    *   Copilot-lock: Always use the `copilot-lock.sh` wrapper (located in `skills/copilot-delegate/`) for every delegation to ensure concurrency safety and proper logging.
-    *   Auto-Commit: Always include the summary and auto-commit directives in the delegation prompt.
-2.  **Protocol (Delegate):**
-    *   Delegate: Use the `copilot-delegate` skill in `skills/copilot-delegate/` to instruct copilot
+| Task Type | Definition | Allowed? | Protocol |
+|-----------|------------|----------|----------|
+| **Trivial Edit** | One-line config change, fixing a typo, updating a JSON value. | ✅ YES | Use `edit` tool directly. |
+| **Logic/Code** | Changing script logic (`if/else`), adding features, debugging errors, writing new scripts. | ❌ NO | **MUST** use `copilot-delegate`. |
+| **Refactoring** | Renaming variables across files, moving code blocks, changing architecture. | ❌ NO | **MUST** use `copilot-delegate`. |
+
+**Delegate Protocol:**
+1.  **Stop:** Do not write the code yourself.
+2.  **Delegate:** Execute `copilot-lock.sh` with a detailed prompt and the MANDATORY summary/auto-commit directives (see `skills/copilot-delegate/SKILL.md`).
+3.  **Verify:** Check `last-result.md` and `git log` to confirm success.
 
 **Why?**
 - Keeps Main Session lightweight.
 - Ensures the best model (Opus) handles the hardest logic via the CLI quota.
 - Enforces the user's preference for "copilot" delegation without manual prompts.
+
+## 🧠 High-Level Reasoning (Expert Check)
+
+**Trigger:**
+- Complex planning or architectural decisions.
+- Analyzing a difficult problem where you feel "stuck".
+- User asks for a "sanity check", "expert opinion", or "deep think".
+
+**Action:**
+Do not spin your wheels in the main session. Immediately use the `expert-check` skill to spawn a high-intelligence sub-agent (Gemini Pro/Claude Opus) to solve the reasoning problem, then report the result.
+
+## 🔍 Semantic Workspace Search
+
+You have a powerful semantic search tool (`local-rag`) that indexes both the user's Obsidian vault AND your own OpenClaw workspace.
+
+**Use When:**
+- You are unsure which skill or tool to use for a task.
+- You need to find documentation, examples, or past decisions within the codebase.
+- You want to recall how a specific feature was implemented.
+
+**How to Use:**
+```bash
+# Search OpenClaw Workspace (Skills, Docs, Memory)
+node skills/local-rag/rag.js search "<query>" /home/jherrild/.openclaw/workspace
+
+# Search Obsidian Vault (User Notes)
+node skills/local-rag/rag.js search "<query>" /mnt/c/Users/Jherr/Documents/remote-personal
+```
+
+**Examples:**
+- "How do I update a skill?" -> `rag.js search "skill update protocol" /home/jherrild/.openclaw/workspace`
+- "What is the auto-index hook?" -> `rag.js search "auto-index hook" /home/jherrild/.openclaw/workspace`
+- "Where did Jesten put the coffee logs?" -> `rag.js search "coffee roasting" /mnt/c/Users/Jherr/Documents/remote-personal`
 
 ## 🛡️ Security (Strict Mode)
 
@@ -272,6 +321,22 @@ Periodically (every few days), use a heartbeat to:
 Think of it like a human reviewing their journal and updating their mental model. Daily files are raw notes; MEMORY.md is curated wisdom.
 
 The goal: Be helpful without being annoying. Check in a few times a day, do useful background work, but respect quiet time.
+
+## ✋ Communication & Permission Protocol
+
+**1. Explicit Confirmation:**
+- When waiting for user permission, **state clearly** that you are waiting.
+- Do NOT say "I will do X" until you have actually started or been given the green light.
+- Use phrasing like: "I am ready to X. Shall I proceed?" or "Waiting for your confirmation to X."
+
+**2. Read-Only Access:**
+- You generally do NOT need to ask permission to **read** files, logs, or system state (unless explicitly marked private/off-limits).
+- Just do it and report the findings. "Checking X..." -> [Tool Output] -> "Here is what I found."
+- **Exception:** Private user data (emails, 1Password secrets) always requires confirmation.
+
+**3. Write/Execute Access:**
+- ALWAYS ask before writing files, installing software, or changing system state (unless covered by an existing "Safe to do freely" policy).
+- **Example:** If I see stray directories (like `skills/` or `memory/`) in your Obsidian vault, I must ASK before deleting them, even if they look like obvious junk.
 
 ## Make It Yours
 
