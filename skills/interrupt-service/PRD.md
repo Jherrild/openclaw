@@ -274,6 +274,9 @@ interrupt-cli.js settings set '{"message":{"batch_window_ms":1000}}'
   "default_channel": "telegram",
   "validators": {
     "ha.state_change": "/home/jherrild/.openclaw/workspace/skills/home-presence/validate-entity.js"
+  },
+  "collectors": {
+    "ha.state_change": "http://127.0.0.1:7601"
   }
 }
 ```
@@ -284,7 +287,53 @@ Array of rule objects (see Rule Schema above). This is the **single source of tr
 ### Hot Reload
 The daemon watches `interrupt-rules.json` and `settings.json` for changes (configurable poll interval via `file_poll_ms`). Changes take effect without restart.
 
-## 10. Migration Plan
+## 10. Collector Push Protocol
+
+When a rule is added, removed, or reloaded, the interrupt service pushes the updated watchlist to the relevant collector(s). This ensures collectors react immediately — no polling delay.
+
+### Configuration
+```json
+{
+  "collectors": {
+    "ha.state_change": "http://127.0.0.1:7601"
+  }
+}
+```
+Map of `source` → collector base URL. Sources without a collector entry are accepted without push.
+
+### Push Behavior
+
+| Event | Push Target | On Failure |
+|-------|-------------|------------|
+| **Rule added** | `POST <collector>/watchlist` | **Roll back** rule, return `503 COLLECTOR_UNAVAILABLE` |
+| **Rule removed** | `POST <collector>/watchlist` | Rule deleted, response includes `warning` field |
+| **Rules reloaded** | All configured collectors | Best-effort, failures logged |
+
+### Watchlist Payload
+```json
+POST /watchlist
+{ "entities": ["person.april_jane", "magnus.voice_command"] }
+
+Response: 200
+{ "status": "ok", "entities": 2 }
+```
+
+### Error Response (collector down)
+```json
+HTTP 503
+{
+  "error": "Collector unavailable: connect ECONNREFUSED 127.0.0.1:7601",
+  "code": "COLLECTOR_UNAVAILABLE",
+  "rule": "rule-id"
+}
+```
+
+### Collector Interface
+Any collector that supports push notifications must expose:
+- `POST /watchlist` — accepts `{ "entities": [...] }`, updates internal watchlist, returns `200`.
+- `GET /health` *(recommended)* — returns `200` with status info.
+
+## 11. Migration Plan
 
 ### From Old System (`interrupt-manager.js` in home-presence)
 
@@ -294,7 +343,7 @@ The daemon watches `interrupt-rules.json` and `settings.json` for changes (confi
 4. **Bridge migration:** `ha-bridge.js` drops `InterruptManager` import, uses HTTP client to POST events and sync watchlist (already done in current branch).
 5. **Deprecation:** Remove `interrupt-manager.js`, old interrupt JSON files, and `register-interrupt.js` from home-presence.
 
-## 11. Challenges & Solutions
+## 12. Challenges & Solutions
 
 ### Challenge 1: Tight Coupling to Home Assistant
 **Problem:** The old system's `evaluate(entityId, oldState, newState)` only understood HA events.
@@ -312,7 +361,7 @@ The daemon watches `interrupt-rules.json` and `settings.json` for changes (confi
 **Problem:** One-off rules must not be lost if dispatch fails.
 **Solution:** Mark-pending-then-finalize pattern (see §5). Rule only removed after confirmed successful dispatch.
 
-## 12. Technical Stack
+## 13. Technical Stack
 - **Runtime:** Node.js
 - **Storage:** JSON files (`interrupt-rules.json`, `settings.json`)
 - **Server:** Node.js `http` module (localhost only)

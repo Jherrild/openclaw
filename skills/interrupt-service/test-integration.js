@@ -253,12 +253,83 @@ async function testUpdateSettings() {
   return { pass: true, detail: '' };
 }
 
+async function testCollectorPush() {
+  // Check ha-bridge health on port 7601
+  let bridgeHealth;
+  try {
+    bridgeHealth = await new Promise((resolve, reject) => {
+      const req = http.request({ hostname: HOST, port: 7601, path: '/health', method: 'GET', timeout: 3000 }, (res) => {
+        let d = ''; res.on('data', c => d += c); res.on('end', () => {
+          try { resolve({ status: res.statusCode, body: JSON.parse(d) }); } catch { resolve({ status: res.statusCode, body: d }); }
+        });
+      });
+      req.on('error', reject);
+      req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+      req.end();
+    });
+  } catch (err) {
+    return { pass: false, detail: `ha-bridge not reachable on port 7601: ${err.message}` };
+  }
+  if (bridgeHealth.status !== 200) return { pass: false, detail: `ha-bridge health returned ${bridgeHealth.status}` };
+  const sizeBefore = bridgeHealth.body.watchlist_size;
+
+  // Add an ha.state_change rule — should push to ha-bridge
+  const addRes = await request('POST', '/rules?skip_validation=1', {
+    id: '__test_push', source: 'ha.state_change',
+    condition: { entity_id: 'binary_sensor.__test_push_entity' },
+    action: 'message', label: 'Push Test',
+  });
+  if (addRes.status !== 200) return { pass: false, detail: `Add rule returned ${addRes.status}: ${JSON.stringify(addRes.body)}` };
+
+  // Check ha-bridge watchlist grew
+  let bridgeAfter;
+  try {
+    bridgeAfter = await new Promise((resolve, reject) => {
+      const req = http.request({ hostname: HOST, port: 7601, path: '/health', method: 'GET', timeout: 3000 }, (res) => {
+        let d = ''; res.on('data', c => d += c); res.on('end', () => {
+          try { resolve({ status: res.statusCode, body: JSON.parse(d) }); } catch { resolve({ status: res.statusCode, body: d }); }
+        });
+      });
+      req.on('error', reject);
+      req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+      req.end();
+    });
+  } catch (err) {
+    return { pass: false, detail: `ha-bridge health after push: ${err.message}` };
+  }
+
+  if (bridgeAfter.body.watchlist_size <= sizeBefore)
+    return { pass: false, detail: `Watchlist did not grow: before=${sizeBefore}, after=${bridgeAfter.body.watchlist_size}` };
+
+  return { pass: true, detail: '' };
+}
+
+async function testCollectorSettings() {
+  // Verify collectors config exists
+  const res = await request('GET', '/settings');
+  const collectors = res.body.collectors || {};
+  if (!collectors['ha.state_change'])
+    return { pass: false, detail: 'No collector configured for ha.state_change' };
+
+  // A system-source rule (no collector) should always succeed
+  const sysRes = await request('POST', '/rules', {
+    id: '__test_no_collector', source: 'system',
+    condition: { type: 'nocoll' }, action: 'message', label: 'No Collector',
+  });
+  if (sysRes.status !== 200)
+    return { pass: false, detail: `System rule add failed: ${sysRes.status}` };
+
+  return { pass: true, detail: '' };
+}
+
 // ── Cleanup ──────────────────────────────────────────────────────────
 
 async function cleanup() {
   await request('DELETE', '/rules/__test_persistent').catch(() => {});
   await request('DELETE', '/rules/__test_oneoff').catch(() => {});
   await request('DELETE', '/rules/__test_skipval').catch(() => {});
+  await request('DELETE', '/rules/__test_push').catch(() => {});
+  await request('DELETE', '/rules/__test_no_collector').catch(() => {});
 }
 
 // ── Test Runner ──────────────────────────────────────────────────────
@@ -282,6 +353,8 @@ const tests = [
   ['HA Entities Watchlist', testHaEntitiesWatchlist],
   ['Reload Rules', testReloadRules],
   ['Update Settings', testUpdateSettings],
+  ['Collector Push (ha-bridge)', testCollectorPush],
+  ['Collector Config (no-collector source)', testCollectorSettings],
 ];
 
 async function main() {

@@ -34,7 +34,7 @@ if (!TOKEN) {
 // of watched entity_ids from the interrupt-service's active ha.state_change
 // rules. Entities in this set are forwarded to the interrupt-service on change.
 const WATCHLIST = new Set();
-const WATCHLIST_SYNC_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const WATCHLIST_SYNC_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes (fallback; push is primary)
 let watchlistSyncTimer = null;
 
 function syncWatchlist() {
@@ -88,7 +88,7 @@ function syncWatchlist() {
 function startWatchlistSync() {
   // Immediate sync on startup
   syncWatchlist();
-  // Periodic sync every 5 minutes
+  // Periodic sync every 15 minutes (safety net; push is primary)
   watchlistSyncTimer = setInterval(syncWatchlist, WATCHLIST_SYNC_INTERVAL_MS);
 }
 
@@ -226,6 +226,7 @@ process.on('SIGUSR1', () => {
 
 // ── Interrupt Service Client ────────────────────────────────────────────────
 const INTERRUPT_SERVICE_PORT = 7600;
+const HA_BRIDGE_HTTP_PORT = 7601;
 
 /**
  * Forward an event to the central interrupt-service via HTTP POST /trigger.
@@ -496,6 +497,51 @@ function connect() {
   });
 }
 
+// ── HTTP Server (collector push endpoint) ───────────────────────────────────
+
+let httpServer = null;
+
+function startHttpServer() {
+  httpServer = http.createServer((req, res) => {
+    const sendJson = (code, data) => {
+      res.writeHead(code, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(data) + '\n');
+    };
+
+    if (req.method === 'POST' && req.url === '/watchlist') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        try {
+          const { entities } = JSON.parse(body);
+          if (!Array.isArray(entities)) return sendJson(400, { error: 'Expected entities array' });
+
+          const prev = new Set(WATCHLIST);
+          WATCHLIST.clear();
+          for (const e of entities) WATCHLIST.add(e);
+          const added = entities.filter(e => !prev.has(e));
+          const removed = [...prev].filter(e => !WATCHLIST.has(e));
+          log('info', `[watchlist] Push received: ${WATCHLIST.size} entities (added=${added.length}, removed=${removed.length})`);
+          sendJson(200, { status: 'ok', entities: WATCHLIST.size });
+        } catch (err) {
+          sendJson(400, { error: `Invalid JSON: ${err.message}` });
+        }
+      });
+      return;
+    }
+
+    if (req.method === 'GET' && req.url === '/health') {
+      return sendJson(200, { status: 'ok', watchlist_size: WATCHLIST.size });
+    }
+
+    sendJson(404, { error: 'Not found' });
+  });
+
+  httpServer.listen(HA_BRIDGE_HTTP_PORT, '127.0.0.1', () => {
+    log('info', `[http] Listening on http://127.0.0.1:${HA_BRIDGE_HTTP_PORT}`);
+  });
+}
+
 // ── Process guard (singleton via pgrep, filtering out vscode) ──────────────────
 
 function checkAlreadyRunning() {
@@ -536,8 +582,9 @@ log('info', 'Starting HA WebSocket bridge');
 log('info', `Log tiers: ${LOG_TIERS.map(t => t.name).join(', ')}`);
 log('info', `All logs capped at ${LOG_MAX_LINES} lines, stored in ${__dirname}`);
 log('info', `Interrupt forwarding via interrupt-service on port ${INTERRUPT_SERVICE_PORT}`);
-log('info', 'Watchlist mode: dynamic (synced from interrupt-service every 5m, SIGUSR2 to force sync)');
+log('info', 'Watchlist mode: push-primary (fallback poll every 15m, SIGUSR2 to force sync)');
 
+startHttpServer();
 startWatchlistSync();
 connect();
 
@@ -548,6 +595,7 @@ function shutdown(signal) {
   clearTimers();
   if (watchlistSyncTimer) { clearInterval(watchlistSyncTimer); watchlistSyncTimer = null; }
   if (debugDumpTimer) { clearTimeout(debugDumpTimer); debugDumpTimer = null; }
+  if (httpServer) { httpServer.close(); httpServer = null; }
   if (ws) {
     ws.close();
     ws = null;

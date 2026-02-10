@@ -15,5 +15,8 @@
   "default_channel": "telegram",
   "validators": {
     "ha.state_change": "/home/jherrild/.openclaw/workspace/skills/home-presence/validate-entity.js"
+  },
+  "collectors": {
+    "ha.state_change": "http://127.0.0.1:7601"
   }
 }

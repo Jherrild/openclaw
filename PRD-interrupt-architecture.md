@@ -224,7 +224,8 @@ The CLI is the primary interface for Magnus and users. It must support:
   "subagent": { "batch_window_ms": 5000, "rate_limit_max": 4,  "rate_limit_window_ms": 60000 },
   "log_limit": 1000,
   "default_channel": "telegram",
-  "validators": { "ha.state_change": "..." }
+  "validators": { "ha.state_change": "..." },
+  "collectors": { "ha.state_change": "http://127.0.0.1:7601" }
 }
 ```
 
@@ -235,9 +236,30 @@ Settings can be hot-reloaded (file watch or `/reload` endpoint).
 New sources are added by:
 1. **Creating a collector script** (dumb — fetches data, POSTs to `/trigger`).
 2. **(Optional) Registering a validator** in `settings.json` → `validators.<source>`.
-3. **Adding rules** via CLI or HTTP API.
+3. **(Optional) Registering a collector** in `settings.json` → `collectors.<source>` with the collector's HTTP base URL.
+4. **Adding rules** via CLI or HTTP API.
 
 No changes to the daemon code required for new sources — only new collector scripts and rules.
+
+### 6.1 Collector Push Protocol
+
+When a rule is added or removed for a source that has a registered collector, the interrupt service **pushes** the updated watchlist to the collector immediately. This eliminates polling delay.
+
+**Push flow:**
+1. Rule added/removed → interrupt service collects all `condition.entity_id` values for that source.
+2. POSTs `{ "entities": [...] }` to `<collector_url>/watchlist`.
+3. Collector updates its internal watchlist and responds `200 { "status": "ok" }`.
+4. If the collector is **unreachable** (connection refused, timeout, non-200):
+   - **On add:** The rule change is **rolled back** and the API returns `503 COLLECTOR_UNAVAILABLE`.
+   - **On remove:** The rule is deleted but a `warning` field is included in the response.
+   - **On reload:** Best-effort — failures are logged but reload succeeds.
+
+**Collector requirements:**
+Any collector that wants push notifications must expose:
+- `POST /watchlist` — accepts `{ "entities": [...] }`, returns `200` with `{ "status": "ok" }`.
+- `GET /health` — returns `200` with status info (recommended for diagnostics).
+
+This protocol is generic — future collectors (mail-sentinel, task-sentinel) can implement the same interface.
 
 ## 7. Guiding Principles
 1. **Single Daemon, Single Source of Truth:** One process owns all interrupt state. No duplication.

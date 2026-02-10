@@ -28,6 +28,7 @@ const DEFAULT_SETTINGS = {
   log_limit: 1000,
   file_poll_ms: 2000,
   default_channel: 'telegram',
+  collectors: {},
 };
 
 // ── In-memory rules cache (for _pending flag tracking) ──────────────────────
@@ -78,6 +79,7 @@ function loadSettings() {
     file_poll_ms: raw.file_poll_ms ?? DEFAULT_SETTINGS.file_poll_ms,
     default_channel: raw.default_channel ?? DEFAULT_SETTINGS.default_channel,
     validators: raw.validators || {},
+    collectors: raw.collectors || {},
   };
 }
 
@@ -92,6 +94,65 @@ function saveSettings(settings) {
     log('error', `Failed to save settings: ${err.message}`);
     throw err;
   }
+}
+
+// ── Collector Push ──────────────────────────────────────────────────────────
+
+async function notifyCollector(source) {
+  const settings = loadSettings();
+  const collectorUrl = settings.collectors[source];
+  if (!collectorUrl) return { ok: true };
+
+  // Build watchlist: unique entity_ids from active rules matching this source
+  const rules = loadRules();
+  const entities = [...new Set(
+    rules
+      .filter(r => r.source === source && r.condition && r.condition.entity_id)
+      .map(r => r.condition.entity_id)
+  )];
+
+  const payload = JSON.stringify({ entities });
+
+  return new Promise((resolve) => {
+    let url;
+    try { url = new URL('/watchlist', collectorUrl); } catch (err) {
+      return resolve({ ok: false, error: `Invalid collector URL: ${err.message}` });
+    }
+
+    const opts = {
+      hostname: url.hostname,
+      port: url.port || 80,
+      path: url.pathname,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) },
+      timeout: 5000,
+    };
+
+    const req = http.request(opts, (res) => {
+      let body = '';
+      res.on('data', chunk => { body += chunk; });
+      res.on('end', () => {
+        if (res.statusCode === 200) {
+          log('info', `[collector] Push to ${source} succeeded: ${body}`);
+          resolve({ ok: true });
+        } else {
+          resolve({ ok: false, error: `Collector returned HTTP ${res.statusCode}: ${body}` });
+        }
+      });
+    });
+
+    req.on('error', (err) => {
+      resolve({ ok: false, error: `Collector unreachable: ${err.message}` });
+    });
+
+    req.on('timeout', () => {
+      req.destroy();
+      resolve({ ok: false, error: 'Collector push timed out (5s)' });
+    });
+
+    req.write(payload);
+    req.end();
+  });
 }
 
 // ── Channel Resolution ──────────────────────────────────────────────────────
@@ -513,6 +574,7 @@ async function handleAddRule(req, sendJson) {
 
   const rules = readJson(RULES_FILE, []);
   const existing = rules.findIndex(r => r.id === rule.id);
+  const previousRule = existing !== -1 ? { ...rules[existing] } : null;
   if (existing !== -1) {
     rules[existing] = { ...rules[existing], ...rule };
   } else {
@@ -520,6 +582,24 @@ async function handleAddRule(req, sendJson) {
     rules.push(rule);
   }
   saveRules(rules);
+
+  // Push updated watchlist to collector; roll back on failure
+  const pushResult = await notifyCollector(rule.source);
+  if (!pushResult.ok) {
+    // Roll back: restore previous state
+    if (previousRule) {
+      const rollback = readJson(RULES_FILE, []);
+      const idx = rollback.findIndex(r => r.id === rule.id);
+      if (idx !== -1) rollback[idx] = previousRule;
+      saveRules(rollback);
+    } else {
+      const rollback = readJson(RULES_FILE, []);
+      saveRules(rollback.filter(r => r.id !== rule.id));
+    }
+    log('warn', `Rule '${rule.id}' rolled back — collector push failed: ${pushResult.error}`);
+    return sendJson(503, { error: `Collector unavailable: ${pushResult.error}`, code: 'COLLECTOR_UNAVAILABLE', rule: rule.id });
+  }
+
   log('info', `Rule '${rule.id}' added/updated (source=${rule.source})`);
   return sendJson(200, { status: 'added', rule: rule.id, validated: true });
 }
@@ -594,9 +674,17 @@ function startServer() {
         const rules = readJson(RULES_FILE, []);
         const idx = rules.findIndex(r => r.id === id);
         if (idx === -1) return sendJson(404, { error: `Rule '${id}' not found` });
+        const deletedRule = rules[idx];
         rules.splice(idx, 1);
         saveRules(rules);
         log('info', `Rule '${id}' deleted`);
+
+        // Push updated watchlist; warn on failure but don't roll back
+        const pushResult = await notifyCollector(deletedRule.source);
+        if (!pushResult.ok) {
+          log('warn', `[collector] Notification failed after deleting rule '${id}': ${pushResult.error}`);
+          return sendJson(200, { status: 'deleted', rule: id, warning: `Collector notification failed: ${pushResult.error}` });
+        }
         return sendJson(200, { status: 'deleted', rule: id });
       }
 
@@ -620,7 +708,17 @@ function startServer() {
         }
         const active = loadRules();
         log('info', `Rules reloaded: ${active.length} active rule(s), ${errors.length} validation error(s)`);
-        return sendJson(200, { status: 'reloaded', rules: active.length, validationErrors: errors });
+
+        // Push to all configured collectors (best-effort)
+        const settings = loadSettings();
+        const collectorResults = {};
+        for (const source of Object.keys(settings.collectors)) {
+          const pushResult = await notifyCollector(source);
+          collectorResults[source] = pushResult.ok ? 'ok' : pushResult.error;
+          if (!pushResult.ok) log('warn', `[collector] Reload push to ${source} failed: ${pushResult.error}`);
+        }
+
+        return sendJson(200, { status: 'reloaded', rules: active.length, validationErrors: errors, collectors: collectorResults });
       }
 
       // POST /add-rule — backward-compatible alias

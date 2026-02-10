@@ -217,6 +217,9 @@ Accepts a JSON merge patch. Only supplied keys are updated; others are preserved
   "default_channel": "telegram",
   "validators": {
     "ha.state_change": "/home/jherrild/.openclaw/workspace/skills/home-presence/validate-entity.js"
+  },
+  "collectors": {
+    "ha.state_change": "http://127.0.0.1:7601"
   }
 }
 ```
@@ -234,6 +237,7 @@ Accepts a JSON merge patch. Only supplied keys are updated; others are preserved
 | `file_poll_ms`                   | `2000`      | Interval to poll rules file for hot reload (ms)    |
 | `default_channel`                | `"telegram"`| Default notification channel for new rules         |
 | `validators`                     | `{}`        | Map of `source` → validator script path            |
+| `collectors`                     | `{}`        | Map of `source` → collector HTTP base URL          |
 
 ### Validators
 
@@ -244,6 +248,24 @@ Validators are external scripts invoked when a rule is added via `POST /rules`. 
 - Wildcard patterns (e.g., `light.*`) in `condition.entity_id` skip entity existence checks
 - Virtual entities with `magnus.*` prefix skip existence checks
 - Sources with no configured validator are always accepted
+
+### Collectors (Push Notification)
+
+When a rule is added or removed for a source that has a registered collector, the interrupt service **pushes** the updated watchlist to the collector immediately. If the collector is unreachable, rule registration **fails** with `503 COLLECTOR_UNAVAILABLE`.
+
+**Behavior on rule add:** Push to collector → collector ACKs → rule saved. If collector is down → rule is **rolled back**, error returned.
+
+**Behavior on rule remove:** Rule deleted → push attempted → if push fails, deletion stands but response includes a `warning`.
+
+**Behavior on reload:** Push to all configured collectors (best-effort, failures logged).
+
+Collectors must expose `POST /watchlist` accepting `{ "entities": [...] }` and returning `200`. The ha-bridge implements this on port 7601.
+
+```bash
+# Check ha-bridge watchlist status
+curl http://127.0.0.1:7601/health
+# → {"status":"ok","watchlist_size":2}
+```
 
 ### `interrupt-rules.json`
 
@@ -343,7 +365,7 @@ Run the integration test suite to verify the service is working correctly. The d
 node skills/interrupt-service/test-integration.js
 ```
 
-Tests cover: health, settings, stats, rule CRUD, trigger matching, one-off lifecycle (including restore on failed dispatch), default actions by level, skip-validation, HA entity watchlist, reload, and settings update. All 18 tests should pass. Run this after any code change to the daemon or CLI.
+Tests cover: health, settings, stats, rule CRUD, trigger matching, one-off lifecycle (including restore on failed dispatch), default actions by level, skip-validation, HA entity watchlist, reload, settings update, collector push to ha-bridge, and no-collector source handling. All 20 tests should pass. Run this after any code change to the daemon or CLI.
 
 ## Logs
 
