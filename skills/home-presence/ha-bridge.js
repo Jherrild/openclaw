@@ -111,6 +111,7 @@ const LOG_TIERS = [
     file: 'presence-log.jsonl',
     patterns: [
       /^person\./,
+      /^device_tracker\./,
       /^binary_sensor\..*occupancy/,
       /^binary_sensor\..*motion/,
       /^binary_sensor\..*presence/,
@@ -542,33 +543,38 @@ function startHttpServer() {
   });
 }
 
-// ── Process guard (singleton via pgrep, filtering out vscode) ──────────────────
+// ── Process guard (singleton via PID lockfile in RuntimeDirectory) ──────────────
+// Systemd's RuntimeDirectory= creates /run/user/<UID>/ha-bridge/ on start and
+// removes it on stop, so stale locks from crashed processes are impossible.
+
+function getLockfilePath() {
+  if (process.env.RUNTIME_DIRECTORY) {
+    return path.join(process.env.RUNTIME_DIRECTORY, 'ha-bridge.lock');
+  }
+  const uid = process.getuid ? process.getuid() : 1000;
+  return path.join(`/run/user/${uid}/ha-bridge`, 'ha-bridge.lock');
+}
 
 function checkAlreadyRunning() {
-  const { execSync } = require('child_process');
+  const lockfile = getLockfilePath();
   try {
-    // Find ha-bridge.js processes, exclude this PID
-    const output = execSync(
-      `pgrep -f 'node.*ha-bridge\\.js' | grep -v '^${process.pid}$' || true`,
-      { encoding: 'utf8' }
-    ).trim();
-
-    if (!output) return false;
-
-    // Filter out vscode and copilot CLI processes (common false positives
-    // where 'ha-bridge.js' appears as a substring in their arguments)
-    const pids = output.split('\n').filter(pid => {
-      if (!pid) return false;
+    const pid = fs.readFileSync(lockfile, 'utf8').trim();
+    // Validate the PID is still alive and is actually ha-bridge
+    if (pid && fs.existsSync(`/proc/${pid}`)) {
       try {
-        const cmdline = execSync(`cat /proc/${pid}/cmdline 2>/dev/null || true`, { encoding: 'utf8' });
-        if (cmdline.includes('vscode') || cmdline.includes('.vscode')) return false;
-        if (cmdline.includes('copilot')) return false;
-        return true;
-      } catch { return false; }
-    });
+        const cmdline = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8');
+        if (cmdline.includes('ha-bridge')) return true;
+      } catch { /* process vanished between checks */ }
+    }
+  } catch { /* no lockfile or unreadable — not running */ }
+  return false;
+}
 
-    return pids.length > 0;
-  } catch { return false; }
+function writePidLockfile() {
+  const lockfile = getLockfilePath();
+  const dir = path.dirname(lockfile);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(lockfile, String(process.pid));
 }
 
 // ── Main ───────────────────────────────────────────────────────────────────────
@@ -578,6 +584,8 @@ if (checkAlreadyRunning()) {
   process.exit(0);
 }
 
+writePidLockfile();
+log('info', `PID lockfile written to ${getLockfilePath()}`);
 log('info', 'Starting HA WebSocket bridge');
 log('info', `Log tiers: ${LOG_TIERS.map(t => t.name).join(', ')}`);
 log('info', `All logs capped at ${LOG_MAX_LINES} lines, stored in ${__dirname}`);
