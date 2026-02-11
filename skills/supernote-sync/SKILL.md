@@ -2,12 +2,25 @@
 
 Synchronizes `.note` files from Google Drive (Supernote backup folder) to the Obsidian vault with intelligent PARA categorization. Notes are converted to PDF + extracted text, then stored as Obsidian-native markdown with embedded PDFs.
 
+## Quick Start
+
+```bash
+# Register and start the daemon (one command)
+bash skills/supernote-sync/start_daemon.sh
+
+# Or with a custom interval
+bash skills/supernote-sync/start_daemon.sh --interval=10m
+```
+
+This registers `check-and-sync.sh` with task-orchestrator and points the interrupt at `obsidian_sync_prompt.md` (editable without re-registering).
+
 ## Overview
 
 - **check-and-sync.sh** runs every 10 minutes via systemd timer and handles ALL Google Drive access
 - **Path A (Updated files):** Script downloads, converts, and refreshes the buffer. Agent regenerates .md if needed.
 - **Path B (New files):** Script downloads and converts to `buffer/<NoteName>/`. Agent categorizes and files them.
 - **You never need Google Drive auth.** All files are local by the time you're woken.
+- **Agent prompt** is stored in `obsidian_sync_prompt.md` and can be tuned there to adjust categorization behavior or workflow instructions.
 
 ## Triggers
 
@@ -87,6 +100,7 @@ node "$SKILL_DIR/obsidian_migrate.js"
 This command:
 - Copies `.pdf` → `<vault-path>/documents/<NoteName>.pdf`
 - Copies `.md` → `<vault-path>/<NoteName>.md`
+- **Lints** each `.md` via `obsidian-scribe/lint.js` (frontmatter, tags, headings)
 - Updates the YAML mapping with `mdPath` + `pdfPath`
 - Cleans up buffer directories
 - Removes processed entries from `.agent-pending`
@@ -168,6 +182,7 @@ node "$SKILL_DIR/mapping-utils.js" read | jq .
 
 | File | Purpose |
 |------|---------|
+| `start_daemon.sh` | One-command daemon registration via task-orchestrator |
 | `check-and-sync.sh` | Systemd timer script: download, convert, buffer, wake agent |
 | `get_new_notes.js` | Agent tool: list new notes with text content |
 | `get_updated_notes.js` | Agent tool: list updated notes with vault paths |
@@ -180,4 +195,5 @@ node "$SKILL_DIR/mapping-utils.js" read | jq .
 | `config.json` | Skill config (vault_root, tool paths) |
 | `buffer/` | Pre-downloaded + converted notes (temporary) |
 | `.agent-pending` | JSON manifest + lockfile (created by script, cleaned by migrate) |
+| `obsidian_sync_prompt.md` | Agent prompt template (tune categorization/workflow instructions here) |
 | `sync.log` | Rolling log (auto-rotates at 500 lines) |

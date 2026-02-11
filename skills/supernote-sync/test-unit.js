@@ -317,7 +317,10 @@ function testObsidianMigrate() {
     const vaultPdf = path.join(vaultRoot, '2-Areas/Notes/documents/Migrate Test.pdf');
     assert.ok(fs.existsSync(vaultMd), 'MD should exist in vault');
     assert.ok(fs.existsSync(vaultPdf), 'PDF should exist in vault');
-    assert.strictEqual(fs.readFileSync(vaultMd, 'utf8'), '# Migrate Test\nContent here');
+    const mdContent = fs.readFileSync(vaultMd, 'utf8');
+    assert.ok(mdContent.includes('# Migrate Test'), 'MD should contain original heading');
+    assert.ok(mdContent.includes('Content here'), 'MD should contain original body');
+    assert.ok(mdContent.startsWith('---\n'), 'MD should be linted with frontmatter');
 
     // Verify buffer cleaned up
     assert.ok(!fs.existsSync(noteDir), 'Buffer dir should be removed');

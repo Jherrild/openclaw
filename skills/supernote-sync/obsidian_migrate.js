@@ -16,6 +16,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { execSync } = require('child_process');
 const { getConfig, readMapping, writeMapping, findByFileId, upsertEntry } = require('./mapping-utils');
 
 const SKILL_DIR = __dirname;
@@ -103,8 +104,11 @@ function main() {
       continue;
     }
 
-    // Determine vault paths
-    const mdRelPath = mapped.mdPath || mapped.localPath;
+    // Determine vault paths (ensure .md extension, not .note)
+    let mdRelPath = mapped.mdPath || mapped.localPath;
+    if (mdRelPath && mdRelPath.endsWith('.note')) {
+      mdRelPath = mdRelPath.replace(/\.note$/, '.md');
+    }
     if (!mdRelPath) {
       log('warn', `Skipping '${noteName}': mapping has no mdPath or localPath`);
       skipped.push(item);
@@ -130,6 +134,15 @@ function main() {
       // Copy .md to vault
       copyFile(bufferMd, vaultMdPath);
       log('info', `Copied .md → ${vaultMdPath}`);
+
+      // Lint the vault .md file via obsidian-scribe
+      try {
+        const lintScript = path.join(SKILL_DIR, '..', 'obsidian-scribe', 'lint.js');
+        execSync(`node "${lintScript}" "${vaultMdPath}"`, { stdio: 'pipe' });
+        log('info', `Linted: ${vaultMdPath}`);
+      } catch (e) {
+        log('warn', `Lint failed for ${vaultMdPath}: ${e.stderr ? e.stderr.toString().trim() : e.message}`);
+      }
 
       // Copy .pdf to vault (if exists)
       if (fs.existsSync(bufferPdf)) {

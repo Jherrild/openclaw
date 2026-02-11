@@ -91,9 +91,13 @@ while read -r file; do
     LOCAL_TS=$(echo "$LOCAL_ENTRY" | jq -r '.modifiedTime')
     LOCAL_PATH=$(echo "$LOCAL_ENTRY" | jq -r '.localPath')
 
-    # Convert to epoch for comparison
+    # Convert to epoch for comparison (empty/null/missing timestamps force resync)
     REMOTE_EPOCH=$(date -d "$REMOTE_TS" +%s 2>/dev/null || echo 0)
-    LOCAL_EPOCH=$(date -d "$LOCAL_TS" +%s 2>/dev/null || echo 0)
+    if [ -z "$LOCAL_TS" ] || [ "$LOCAL_TS" = "null" ] || [ "$LOCAL_TS" = "" ]; then
+      LOCAL_EPOCH=0
+    else
+      LOCAL_EPOCH=$(date -d "$LOCAL_TS" +%s 2>/dev/null || echo 0)
+    fi
 
     if [ "$REMOTE_EPOCH" -gt "$LOCAL_EPOCH" ]; then
       log "PATH A: Updating known file: $FILE_NAME"
@@ -191,9 +195,8 @@ if [ "$NEW" -gt 0 ] || [ "$UPDATED" -gt 0 ]; then
     log "Waking agent for $NEW new file(s), $UPDATED updated file(s)"
     jq -n --argjson new "$NEW_JSON" --argjson updated "$UPDATED_JSON" \
       '{"new": $new, "updated": $updated}' > "$AGENT_PENDING"
-    TASK_MSG=$(cat "$SKILL_DIR/obsidian_sync_prompt.md")
-    echo "supernote-sync: $NEW new file(s) downloaded to buffer, $UPDATED updated."$'\n'"$TASK_MSG"
-    log "Agent wake triggered"
+    echo "supernote-sync: $NEW new file(s) downloaded to buffer, $UPDATED updated."
+    log "Agent wake triggered via stdout (task-orchestrator)"
   fi
 else
   log "No changes detected (0 new, 0 updated)"
