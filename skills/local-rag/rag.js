@@ -12,6 +12,7 @@ import fs from 'fs';
 import path from 'path';
 import { openDb, insertChunk, deleteFile, deleteFileMetadata, getAllDocuments, getDocCount, clearAll, getDbPath, insertFileMetadata, getAllFileMetadata, getFileMtimes, updateFileMtime, findSourceDirForFile, vectorSearch, keywordSearch, reciprocalRankFusion, entityShortcut } from './db.js';
 import { checkOllama, embed, embedBatch, cosineSimilarity, chat } from './embeddings.js';
+import { predictPara } from './para-predict.js';
 
 const CONFIG = JSON.parse(fs.readFileSync(new URL('./config.json', import.meta.url)));
 
@@ -493,6 +494,51 @@ async function cmdQuery(question, dirPath) {
   console.log(answer);
 }
 
+async function cmdPredict(dirPath, textOrFile) {
+  if (!dirPath) {
+    console.error('Usage: node rag.js predict <directory> "<text>" | --file <path>');
+    process.exit(1);
+  }
+
+  const absDir = path.resolve(dirPath);
+  const dbPath = getDbPath(absDir);
+
+  if (!fs.existsSync(dbPath)) {
+    console.error(`No index found for: ${absDir}`);
+    console.error('Run: node rag.js index <directory>');
+    process.exit(1);
+  }
+
+  if (!await checkOllama()) {
+    console.error('Ollama is not reachable. Run: ollama serve');
+    process.exit(1);
+  }
+
+  // Resolve text input
+  let text = textOrFile;
+  if (textOrFile === '--file') {
+    const filePath = path.resolve(process.argv[5] || '');
+    if (!fs.existsSync(filePath)) {
+      console.error(`File not found: ${filePath}`);
+      process.exit(1);
+    }
+    text = fs.readFileSync(filePath, 'utf-8');
+  }
+
+  if (!text || !text.trim()) {
+    console.error('Error: No text provided.');
+    process.exit(1);
+  }
+
+  const db = openDb(absDir);
+  try {
+    const result = await predictPara(db, text, { k: 10 });
+    console.log(JSON.stringify(result, null, 2));
+  } finally {
+    db.close();
+  }
+}
+
 function cmdReset(dirPath) {
   if (!dirPath) {
     console.error('Usage: node rag.js reset <directory>');
@@ -531,6 +577,9 @@ switch (command) {
   case 'query':
     cmdQuery(args[1], args[2]).catch(console.error);
     break;
+  case 'predict':
+    cmdPredict(args[1], args[2]).catch(console.error);
+    break;
   case 'reset':
     cmdReset(args[1]);
     break;
@@ -545,6 +594,8 @@ Usage:
   node rag.js index <file>                         Index a single file (vault must exist)
   node rag.js search "<query>" <directory>         Search indexed content
   node rag.js query "<question>" <directory>       RAG answer synthesis
+  node rag.js predict <directory> "<text>"         Predict PARA destination for text
+  node rag.js predict <directory> --file <path>    Predict PARA destination for a file
   node rag.js reset <directory>                    Delete index database for a directory
 
 Examples:
@@ -553,6 +604,8 @@ Examples:
   node rag.js index ~/notes/new-note.md
   node rag.js search "machine learning" ~/notes
   node rag.js query "What are the key points about X?" ~/notes
+  node rag.js predict ~/notes "My document about financial planning and budgets"
+  node rag.js predict ~/notes --file ~/Desktop/new-note.md
   node rag.js reset ~/notes
 
 Configuration:
