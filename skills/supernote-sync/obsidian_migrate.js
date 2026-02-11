@@ -23,7 +23,8 @@ const AGENT_PENDING = path.join(SKILL_DIR, '.agent-pending');
 
 function log(level, msg) {
   const ts = new Date().toISOString();
-  console[level === 'error' ? 'error' : 'log'](`[${ts}] [migrate] [${level}] ${msg}`);
+  // All log lines go to stderr to keep stdout clean for JSON output
+  console.error(`[${ts}] [migrate] [${level}] ${msg}`);
 }
 
 function copyFile(src, dest) {
