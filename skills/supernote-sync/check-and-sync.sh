@@ -170,9 +170,9 @@ rm -f "$NEW_FILES_BUFFER" "$UPDATED_FILES_BUFFER"
 NEW=$(echo "$NEW_JSON" | jq 'length')
 UPDATED=$(echo "$UPDATED_JSON" | jq 'length')
 
-# Wake agent if new files found (with re-wake guard + staleness check)
+# Wake agent if new or updated files found (with re-wake guard + staleness check)
 LOCK_STALE_SECONDS=1800  # 30 minutes
-if [ "$NEW" -gt 0 ]; then
+if [ "$NEW" -gt 0 ] || [ "$UPDATED" -gt 0 ]; then
   SHOULD_WAKE=false
   if [ -f "$AGENT_PENDING" ]; then
     LOCK_AGE=$(( $(date +%s) - $(stat -c %Y "$AGENT_PENDING") ))
@@ -182,7 +182,7 @@ if [ "$NEW" -gt 0 ]; then
       SHOULD_WAKE=true
     else
       log "Skipping agent wake: .agent-pending lockfile exists (${LOCK_AGE}s old, agent still processing)"
-      log "New files waiting: $NEW"
+      log "Files waiting: $NEW new, $UPDATED updated"
     fi
   else
     SHOULD_WAKE=true
@@ -191,11 +191,12 @@ if [ "$NEW" -gt 0 ]; then
     log "Waking agent for $NEW new file(s), $UPDATED updated file(s)"
     jq -n --argjson new "$NEW_JSON" --argjson updated "$UPDATED_JSON" \
       '{"new": $new, "updated": $updated}' > "$AGENT_PENDING"
-    echo "supernote-sync: $NEW new file(s) downloaded to buffer, $UPDATED updated. Read .agent-pending for manifest."
+    TASK_MSG=$(cat "$SKILL_DIR/obsidian_sync_prompt.md")
+    echo "supernote-sync: $NEW new file(s) downloaded to buffer, $UPDATED updated."$'\n'"$TASK_MSG"
     log "Agent wake triggered"
   fi
 else
-  log "No new files. $UPDATED file(s) updated."
+  log "No changes detected (0 new, 0 updated)"
 fi
 
 log "Sync complete. Updated: $UPDATED, New: $NEW"
