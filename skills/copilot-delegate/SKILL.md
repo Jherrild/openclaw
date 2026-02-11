@@ -50,6 +50,33 @@ Environment variables for tuning (optional):
 - `COPILOT_LOCK_STALE` — seconds before a lock is considered stale (default: 300)
 - `COPILOT_SESSION_ID` — session identifier written into the lock file
 
+### Session-Aware Interrupt Notifications
+
+The `copilot-lock.sh` wrapper automatically triggers an interrupt notification upon task completion (success or failure). This eliminates the need to poll for results — the main session is notified as soon as Copilot finishes.
+
+**How it works:**
+1. On startup, the wrapper detects the current OpenClaw session ID via `$OPENCLAW_SESSION_ID` (defaults to `main`).
+2. When Copilot exits, the `cleanup` trap fires an interrupt via the interrupt-service CLI, reporting the task status (Success/Failure) and pointing to `last-result.md`.
+3. A `COPILOT_EXECUTED` guard prevents spurious notifications if the script exits before Copilot actually runs (e.g., lock timeout).
+
+**`--notify-session <id>` flag:**
+
+Override the target session for the interrupt notification. By default the wrapper notifies the session identified by `$OPENCLAW_SESSION_ID` (or `main` if unset).
+
+```bash
+# Notify a specific session instead of the current one
+bash "$LOCK_WRAPPER" -p "..." --notify-session "abc-123" --model claude-opus-4.6 --allow-all
+```
+
+**Sub-agent use case:** When a sub-agent delegates a coding task, it can pass the main session's ID via `--notify-session` so that the completion interrupt is delivered to the orchestrating session, not the ephemeral sub-agent:
+
+```bash
+# Sub-agent delegates work but notifies the main session
+bash "$LOCK_WRAPPER" -p "..." \
+  --notify-session "$MAIN_SESSION_ID" \
+  --model claude-opus-4.6 --allow-all
+```
+
 ## Tools
 
 ### copilot_delegate
@@ -235,6 +262,8 @@ Common extra paths:
 
 ### 5. Read the Result
 
+**No polling needed.** The `copilot-lock.sh` wrapper sends an automatic interrupt notification when the task completes (see [Session-Aware Interrupt Notifications](#session-aware-interrupt-notifications)). You will be notified with the task status and a pointer to `last-result.md`.
+
 **Do NOT read the full session transcript.** It will be thousands of tokens and will bloat your context.
 
 Instead:
@@ -334,6 +363,8 @@ git commit -m "<type>(<scope>): <description>"
    # If expected commit is missing, check for unstaged changes
    git status --porcelain
    ```
+
+7. **No polling required.** The wrapper sends an automatic interrupt notification on task completion via the interrupt-service. You do not need to poll `last-result.md` or check process status — just wait for the notification. See [Session-Aware Interrupt Notifications](#session-aware-interrupt-notifications) for details.
 
 ## Session Cleanup
 
