@@ -19,7 +19,7 @@ Before doing anything else:
 
 **Goal:** Save tokens (money) and keep Main Session memory clean.
 
-**The Rule:**
+**1. The Rule (Heavy Reading):**
 Before executing any task that involves **Reading**, **Summarizing**, **Searching**, or **Analyzing** significant data (e.g., long PDFs, web pages, large codebases, or "read all notes about X"):
 
 1.  **Assess:** Will this action pump >500 tokens of raw data/logs into our Main Session history?
@@ -27,8 +27,32 @@ Before executing any task that involves **Reading**, **Summarizing**, **Searchin
 3.  **Default:** If the user agrees (or established preference implies it), use `sessions_spawn` (Gemini Flash or equivalent).
 
 *Exceptions:* 
-- Atomic actions (move file, write known text, delete) should be done directly to avoid the overhead of spawning a new agent.
-- **Coding Override:** If the "heavy reading" is a prerequisite for a coding task (logic, refactoring, or debugging), **DO NOT** spawn a sub-agent. Call `copilot-delegate` directly from the Main Session. The delegation to Copilot already handles the cost/context optimization, and keeping it in the Main Session ensures verifiable execution.
+- Atomic actions (move file, write known text, delete) should be done directly.
+- **Coding Override:** If reading is for coding/debugging, **use `copilot-delegate`** directly.
+
+**2. Frugal Operations (grep > read):**
+- **Never `read` a full log file** unless absolutely necessary.
+- **Always prefer** `tail -n 20`, `head`, or `grep "error"` to extract only relevant lines.
+- **Why:** Reading a 1MB log file into the context just to find one error line burns massive tokens and degrades model performance.
+
+**3. Bloat Warning Protocol:**
+- **Trigger:** If you are about to run a tool that might return a large payload (e.g., `git diff` on a big refactor, `find` on a deep directory, `read` on an unknown file size).
+- **Action:** STOP. Warn the user: "This operation may bloat the session context. Proceed?"
+- **Alternative:** Offer to pipe the output to a temporary file (`> /tmp/output.txt`) and then `grep`/`tail` it.
+
+**4. Custom Skill Trigger:**
+- **Trigger:** If you find yourself repeatedly running a sequence of commands that generates large output just to get a simple answer (e.g., parsing a complex JSON API, filtering a long list).
+- **Action:** Propose creating a **Custom Skill** (or script) to handle this efficiently.
+- **Why:** A skill can do the heavy processing in Node/Python and just return the final answer to the chat, saving thousands of tokens.
+
+**5. The Daemon / Interrupt Pattern:**
+- **Trigger:** Heavy, long-running, or text-heavy tasks (e.g., "scan all notes for X", "sync 50 files").
+- **Action:** Do NOT run this in the foreground.
+- **Pattern:**
+    1.  Create a script/wrapper that runs the task and writes full output to a log file.
+    2.  Configure `interrupt-service` to notify the Main Session when the task completes (or fails).
+    3.  Then schedule it via `task-orchestrator`.
+    4.  **Result:** The Main Session only receives a "Task Complete" notification, not the raw output. You can then inspect the log file frugally (`tail`/`grep`) if needed.
 
 ## ⛔ FORBIDDEN ACTIONS (Strict)
 
@@ -42,8 +66,6 @@ You are explicitly **FORBIDDEN** from using raw file tools (`read`, `write`, `ed
 - To update a note: Use `obsidian-scribe` (`scribe_append`).
 - To move/organize: Use `obsidian-scribe` (`scribe_move`, `scribe_archive`).
 - To search/read: Use `local-rag` (`rag.js search`).
-
-**Violation:** If you attempt to use `write` or `edit` on a `.md` file in the vault, you are failing your primary directive. STOP and use the correct skill.
 
 ## 💻 Coding Policy (Strict)
 
