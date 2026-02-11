@@ -3,14 +3,33 @@
 # Ensures only one Copilot CLI instance runs at a time via lock file.
 # All arguments are passed through to the copilot CLI.
 #
-# Usage: bash copilot-lock.sh [copilot args...]
+# Usage: bash copilot-lock.sh [--notify-session <id>] [copilot args...]
 # Example: bash copilot-lock.sh -p "Fix the bug" --model claude-opus-4.6 --allow-all
+# Example: bash copilot-lock.sh --notify-session main -p "Fix the bug" --model claude-opus-4.6 --allow-all
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOCKFILE="${SCRIPT_DIR}/.copilot.lock"
 COPILOT_BIN="${COPILOT_BIN:-copilot}"
+INTERRUPT_CLI="${SCRIPT_DIR}/../interrupt-service/interrupt-cli.js"
+
+# --- Parse --notify-session flag (consumed here, not passed to copilot) ---
+NOTIFY_SESSION="${OPENCLAW_SESSION_ID:-main}"
+COPILOT_EXECUTED=false
+COPILOT_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --notify-session)
+      NOTIFY_SESSION="${2:?--notify-session requires a session ID}"
+      shift 2
+      ;;
+    *)
+      COPILOT_ARGS+=("$1")
+      shift
+      ;;
+  esac
+done
 
 # --- Configuration ---
 MAX_WAIT_SECS="${COPILOT_LOCK_TIMEOUT:-600}"   # 10 min max wait
@@ -95,8 +114,50 @@ release_lock() {
   rmdir "${LOCKFILE}.d" 2>/dev/null || true
 }
 
+# --- Interrupt Notification ---
+notify_completion() {
+  local exit_code="$1"
+
+  # Only notify if copilot was actually executed
+  if [[ "$COPILOT_EXECUTED" != "true" ]]; then
+    return 0
+  fi
+
+  local status="Success"
+  local level="info"
+  if [[ "$exit_code" -ne 0 ]]; then
+    status="Failure"
+    level="warn"
+  fi
+
+  if ! command -v node &>/dev/null || [[ ! -f "$INTERRUPT_CLI" ]]; then
+    log "Interrupt CLI not available — skipping notification"
+    return 0
+  fi
+
+  local msg="[copilot-delegate] ${status} (exit ${exit_code}). See skills/copilot-delegate/last-result.md"
+
+  # Add a one-off rule targeting the notify session, then trigger the event
+  node "$INTERRUPT_CLI" add \
+    --source copilot.task_complete \
+    --session-id "$NOTIFY_SESSION" \
+    --one-off \
+    --action message \
+    --message "$msg" \
+    --label "Copilot ${status}" \
+    --skip-validation 2>/dev/null || true
+
+  node "$INTERRUPT_CLI" trigger \
+    --source copilot.task_complete \
+    --message "$msg" \
+    --level "$level" 2>/dev/null || true
+
+  log "Interrupt sent (${status}, session: ${NOTIFY_SESSION})"
+}
+
 cleanup() {
   local exit_code=$?
+  notify_completion "$exit_code"
   release_lock
   exit "$exit_code"
 }
@@ -140,5 +201,6 @@ while true; do
 done
 
 # Execute copilot with all passed arguments
-log "Executing: $COPILOT_BIN $*"
-"$COPILOT_BIN" "$@"
+COPILOT_EXECUTED=true
+log "Executing: $COPILOT_BIN ${COPILOT_ARGS[*]:-}"
+"$COPILOT_BIN" "${COPILOT_ARGS[@]}"
