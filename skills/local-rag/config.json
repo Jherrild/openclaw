@@ -1,10 +1,24 @@
 {
   "embedding_model": "nomic-embed-text",
+  "embedding_dim": 768,
   "chat_model": "gemma:2b",
   "ollama_url": "http://localhost:11434",
-  "chunk_size": 1000,
-  "chunk_overlap": 200,
+  "chunk_size": 800,
+  "chunk_overlap": 0,
   "top_k": 20,
   "db_dir": "~/.local-rag",
-  "concurrency": 5
+  "concurrency": 5,
+  "rrf_k": 60,
+  "vector_search_limit": 50,
+  "fts_search_limit": 50,
+  "fts_weights": {
+    "filename": 10,
+    "title": 8,
+    "tags": 5,
+    "aliases": 8,
+    "para_area": 4,
+    "headers": 3,
+    "summary": 3,
+    "content": 1
+  }
 }

@@ -10,7 +10,7 @@
  */
 import fs from 'fs';
 import path from 'path';
-import { openDb, insertChunk, deleteFile, deleteFileMetadata, getAllDocuments, getDocCount, clearAll, getDbPath, insertFileMetadata, getAllFileMetadata, getFileMtimes, updateFileMtime, findSourceDirForFile } from './db.js';
+import { openDb, insertChunk, deleteFile, deleteFileMetadata, getAllDocuments, getDocCount, clearAll, getDbPath, insertFileMetadata, getAllFileMetadata, getFileMtimes, updateFileMtime, findSourceDirForFile, vectorSearch, keywordSearch, reciprocalRankFusion, entityShortcut } from './db.js';
 import { checkOllama, embed, embedBatch, cosineSimilarity, chat } from './embeddings.js';
 
 const CONFIG = JSON.parse(fs.readFileSync(new URL('./config.json', import.meta.url)));
@@ -74,32 +74,84 @@ function extractMetadata(filePath, content) {
   
   // Extract headers
   const headers = extractHeaders(body);
+
+  // Extract summary from frontmatter
+  const summary = frontmatter.summary || '';
+
+  // Extract PARA context from file path
+  const { paraCategory, paraArea } = extractParaContext(filePath);
   
-  return { filename, title, tags, aliases, headers, body };
+  return { filename, title, tags, aliases, headers, body, summary, paraCategory, paraArea };
+}
+
+// Extract PARA category and area from file path
+function extractParaContext(filePath) {
+  // Match patterns like /1-Projects/..., /2-Areas/Finance/..., /3-Resources/..., /4-Archive/...
+  const paraMatch = filePath.match(/[/\\](([1-4]-[A-Za-z]+)[/\\]([^/\\]+))/);
+  if (paraMatch) {
+    return {
+      paraCategory: paraMatch[2],  // e.g. "2-Areas"
+      paraArea: paraMatch[3]       // e.g. "Finance"
+    };
+  }
+  // Try to at least get the category
+  const catMatch = filePath.match(/[/\\]([1-4]-[A-Za-z]+)[/\\]/);
+  if (catMatch) {
+    return { paraCategory: catMatch[1], paraArea: null };
+  }
+  return { paraCategory: null, paraArea: null };
 }
 
 // Create metadata prefix for chunk embedding enrichment
 function createMetadataPrefix(metadata) {
   const parts = [];
   if (metadata.title) parts.push(`[Title: ${metadata.title}]`);
+  if (metadata.paraArea) parts.push(`[Area: ${metadata.paraArea}]`);
   if (metadata.tags.length > 0) parts.push(`[Tags: ${metadata.tags.join(', ')}]`);
   if (metadata.aliases.length > 0) parts.push(`[Aliases: ${metadata.aliases.join(', ')}]`);
+  if (metadata.summary) parts.push(`[Summary: ${metadata.summary}]`);
   return parts.length > 0 ? parts.join(' ') + ' ' : '';
 }
 
-// Chunk text into overlapping segments
-function chunkText(text, size = CONFIG.chunk_size, overlap = CONFIG.chunk_overlap) {
+// Split text at sentence boundaries (fallback for oversized paragraphs)
+function splitAtSentences(text, maxSize) {
+  const sentences = text.match(/[^.!?]+[.!?]+\s*/g) || [text];
   const chunks = [];
-  let start = 0;
-  
-  while (start < text.length) {
-    const end = Math.min(start + size, text.length);
-    chunks.push(text.slice(start, end));
-    start += size - overlap;
-    if (end === text.length) break;
+  let current = '';
+
+  for (const sentence of sentences) {
+    if (current.length + sentence.length > maxSize && current.length > 0) {
+      chunks.push(current.trim());
+      current = '';
+    }
+    current += sentence;
   }
-  
+  if (current.trim()) chunks.push(current.trim());
   return chunks;
+}
+
+// Paragraph-aware chunking: preserves semantic coherence
+function chunkText(text, maxChunkSize) {
+  maxChunkSize = maxChunkSize || CONFIG.chunk_size || 800;
+  const paragraphs = text.split(/\n\n+/);
+  const chunks = [];
+  let current = '';
+
+  for (const para of paragraphs) {
+    if (current.length + para.length > maxChunkSize && current.length > 0) {
+      chunks.push(current.trim());
+      current = '';
+    }
+    current += (current ? '\n\n' : '') + para;
+  }
+  if (current.trim()) chunks.push(current.trim());
+
+  // Split oversized chunks at sentence boundaries
+  return chunks.flatMap(chunk =>
+    chunk.length > maxChunkSize * 1.5
+      ? splitAtSentences(chunk, maxChunkSize)
+      : [chunk]
+  );
 }
 
 // Walk directory for markdown files
@@ -249,7 +301,7 @@ async function cmdIndex(paths) {
     deleteFile(db, filePath);
 
     const metadata = extractMetadata(filePath, content);
-    insertFileMetadata(db, filePath, metadata.filename, metadata.title, metadata.tags, metadata.aliases, metadata.headers);
+    insertFileMetadata(db, filePath, metadata.filename, metadata.title, metadata.tags, metadata.aliases, metadata.headers, metadata.paraCategory, metadata.paraArea, metadata.summary, metadata.body);
 
     const metadataPrefix = createMetadataPrefix(metadata);
     const chunks = chunkText(metadata.body);
