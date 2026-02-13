@@ -6,7 +6,7 @@
   "private": true,
   "scripts": {
     "login": "node login.mjs",
-    "check-529": "node check-529.mjs"
+    "bridge": "node monarch-bridge.mjs"
   },
   "dependencies": {
     "monarch-money-api": "^0.0.4"

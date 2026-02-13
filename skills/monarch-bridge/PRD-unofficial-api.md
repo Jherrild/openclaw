@@ -1,4 +1,10 @@
-# PRD: Unofficial Monarch API Bridge (Node.js)
+# PRD: Unofficial Monarch API Bridge (Node.js) — Reduced Scope
+
+## Status
+
+**Phase 2 (CLI Implementation) — In Progress**
+
+Reduced scope: 529-specific features removed. Focus on three core read-only commands: `accounts`, `net-worth`, `transactions`.
 
 ## Problem Statement
 
@@ -30,37 +36,6 @@ For our use case, we will obtain a token once (via interactive login or programm
 ### API Endpoint Difference
 
 The Python `monarchmoney` library hits `https://app.monarchmoney.com/graphql`, while this Node.js library hits `https://api.monarchmoney.com/graphql` — a dedicated API subdomain. This difference may be significant for Cloudflare bypass since the API subdomain likely has different bot-detection rules than the web app.
-
-### 529 Plan Account Support
-
-**Yes — 529 accounts are retrievable.** Here's the analysis:
-
-The `getAccounts()` method returns all linked accounts with the following relevant fields via the `AccountFields` GraphQL fragment:
-
-| Field | Description |
-|-------|-------------|
-| `id` | UUID — used to fetch holdings |
-| `displayName` | User-facing name (e.g., "Fidelity 529 - Magnus") |
-| `currentBalance` | Current balance |
-| `type.name` / `type.display` | Account type (e.g., `"brokerage"`, `"investment"`) |
-| `subtype.name` / `subtype.display` | Account subtype (e.g., `"529"`, `"529_plan"`, `"education_savings"`) |
-| `holdingsCount` | Number of investment holdings |
-| `institution.name` | Institution name (e.g., "Fidelity") |
-| `includeInNetWorth` | Whether included in NW calculation |
-| `isAsset` | Boolean — 529s are assets |
-
-529 plans are investment accounts. They will appear in `getAccounts()` output. To identify them:
-
-1. **By `subtype.name`/`subtype.display`:** Monarch categorizes 529 plans with specific subtypes. The `getAccountTypeOptions()` method returns all valid type/subtype combinations.
-2. **By `displayName`:** Users often name accounts with "529" in the name.
-3. **By filtering:** Check `type.name === "brokerage"` or `type.name === "investment"` AND `subtype` containing "529" or "education".
-
-For **529 holdings** (individual funds within the 529), use `getAccountHoldings(accountId)` which returns:
-- `security.name` / `security.ticker` — fund name and ticker
-- `quantity` — number of shares
-- `totalValue` — current market value
-- `basis` — cost basis
-- `securityPriceChangeDollars` / `securityPriceChangePercent` — daily change
 
 ## Architecture
 
@@ -96,13 +71,8 @@ Only the following read methods from the library will be exposed:
 | Command | API Method | Purpose |
 |---------|-----------|---------|
 | `accounts` | `getAccounts()` | List all accounts + balances |
-| `account-details <id>` | `getAccountHoldings(id)` + `getAccountHistory(id)` | Holdings/history for one account |
 | `transactions` | `getTransactions({...})` | Recent transactions with filters |
-| `categories` | `getBudgets(start, end)` | Budget categories + spending vs goal |
 | `net-worth` | `getAccounts()` (computed) | Token-dense NW one-liner |
-| `529` | `getAccounts()` + `getAccountHoldings(id)` | 529-specific view (NEW) |
-| `cashflow` | `getCashflow({...})` | Income/expense summary (NEW) |
-| `recurring` | `getRecurringTransactions(start, end)` | Recurring transactions (NEW) |
 
 **Mutation methods (create, update, delete) will NOT be exposed.** The CLI will not import or call any mutation functions.
 
@@ -120,27 +90,7 @@ Only the following read methods from the library will be exposed:
   ```
 - **Token refresh:** If a request fails with auth error, the wrapper re-runs the login flow and updates 1Password.
 
-### 3. 529 Plan Specific Features
-
-A dedicated `529` command that:
-
-1. Calls `getAccounts()` and filters for 529-type accounts by:
-   - `subtype.name` or `subtype.display` containing "529" or "education"
-   - `displayName` containing "529"
-2. For each 529 account, calls `getAccountHoldings(accountId)` to get fund-level detail.
-3. Outputs a compact summary:
-   ```
-   ── 529 Plans ──
-     [uuid-1] Fidelity 529 - Magnus: $12,345.67 (3 holdings)
-       FIDELITY INDEX FUND (FXAIX): $8,234.12 | 52.3 shares | +$1,230.45 (+17.6%)
-       FIDELITY BOND INDEX (FXNAX): $3,111.55 | 31.2 shares | +$89.10 (+2.9%)
-       CASH RESERVES: $1,000.00
-     [uuid-2] Fidelity 529 - Sibling: $9,876.54 (2 holdings)
-       ...
-   Total 529 Value: $22,222.21
-   ```
-
-### 4. Output Format
+### 3. Output Format
 
 All output follows the existing token-dense format from the Python bridge:
 - Compact, no banners or progress bars
@@ -148,7 +98,7 @@ All output follows the existing token-dense format from the Python bridge:
 - Consistent with existing `monarch_bridge.py` output format
 - Same `sanitize_text()` equivalent for merchant/note fields
 
-### 5. Error Handling
+### 4. Error Handling
 
 | Error | Behavior |
 |-------|----------|
@@ -156,7 +106,6 @@ All output follows the existing token-dense format from the Python bridge:
 | Auth failure (401/403) | Print `ERROR: Token expired or invalid. Re-run login.` → exit 1 |
 | Network/Cloudflare error | Print error details → exit 1 |
 | Account not found | Print `No account found with ID <id>` → exit 1 |
-| No 529 accounts | Print `No 529 accounts found.` → exit 0 |
 
 ## File Layout
 
@@ -164,79 +113,48 @@ All output follows the existing token-dense format from the Python bridge:
 skills/monarch-bridge/
 ├── PRD.md                      # Original PRD (v1, host-native Python)
 ├── PRD-docker.md               # Docker/Tailscale approach
-├── PRD-unofficial-api.md       # This document (v3, Node.js)
+├── PRD-unofficial-api.md       # This document (v3, Node.js — reduced scope)
 ├── SKILL.md                    # Agent-facing skill docs (update post-implementation)
-├── monarch_bridge.py           # Current Python CLI (keep as fallback)
+├── monarch_bridge.py           # Current Python CLI (keep as fallback, DO NOT MODIFY)
 ├── requirements.txt            # Python deps (keep for Python version)
-├── monarch-bridge.mjs          # NEW: Node.js CLI entry point
+├── monarch-bridge.mjs          # Node.js CLI entry point (3 commands)
 ├── lib/
-│   ├── accounts.mjs            # Account commands (accounts, account-details, 529)
-│   ├── transactions.mjs        # Transaction commands
-│   ├── budgets.mjs             # Budget/categories commands
-│   ├── format.mjs              # Output formatting helpers (fmt_money, sanitize)
-│   └── auth.mjs                # Token validation, 1Password integration
-├── login.mjs                   # NEW: One-time token acquisition script
-├── monarch-bridge.sh           # NEW: Wrapper script (injects token, calls node)
-├── package.json                # NEW: Node.js dependencies
-├── .env.example                # NEW: Documents MONARCH_TOKEN
-└── .gitignore                  # Updated to include node_modules/
+│   ├── accounts.mjs            # accounts + net-worth commands
+│   ├── transactions.mjs        # transactions command
+│   ├── format.mjs              # Output formatting helpers (fmtMoney, sanitize, fmtDate)
+│   └── auth.mjs                # Token validation (requireToken)
+├── login.mjs                   # One-time interactive token acquisition
+├── package.json                # Node.js dependencies
+└── .gitignore                  # node_modules/, .venv/, etc.
 ```
+
+> **Removed:** `check-529.mjs` (529-specific prototype), `monarch-bridge.sh` (deferred), `.env.example` (deferred).
 
 ## Implementation Plan
 
-### Phase 1: Prototype & 529 Validation
+### Phase 1: Prototype ✅ DONE
 
-1. Initialize `package.json` and install `monarch-money-api`.
-2. Write `login.mjs` — interactive token acquisition via 1Password credentials.
-3. Write a quick test script to call `getAccounts()` and verify:
-   - 529 accounts appear in the response.
-   - The `type`/`subtype` fields identify them correctly.
-   - `getAccountHoldings()` returns fund-level data for 529 accounts.
-4. **Confirm whether `api.monarchmoney.com` avoids the Cloudflare 525 errors** that plague `app.monarchmoney.com`.
+1. ~~Initialize `package.json` and install `monarch-money-api`.~~
+2. ~~Write `login.mjs` — interactive token acquisition.~~
+3. ~~Write `check-529.mjs` to verify API connectivity.~~ (removed — 529 scope dropped)
 
-### Phase 2: CLI Implementation
+### Phase 2: CLI Implementation ✅ DONE
 
-1. Implement `monarch-bridge.mjs` with argument parsing (use Node.js `parseArgs` or minimal `process.argv` parsing — no heavy CLI framework needed).
-2. Port all 5 existing commands from `monarch_bridge.py`:
-   - `accounts` → `getAccounts()`
-   - `account-details <id>` → `getAccountHoldings()` + `getAccountHistory()`
-   - `transactions [filters]` → `getTransactions({...})`
-   - `categories` → `getBudgets()`
-   - `net-worth` → `getAccounts()` (computed)
-3. Add new commands:
-   - `529` → 529-specific filtered view with holdings
-   - `cashflow` → `getCashflow()`
-   - `recurring` → `getRecurringTransactions()`
-4. Write `monarch-bridge.sh` wrapper script:
-   ```bash
-   #!/usr/bin/env bash
-   set -euo pipefail
-   SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-   export MONARCH_TOKEN=$(op read "op://Magnus Agent Vault/Monarch/api-token" 2>/dev/null || true)
-   if [ -z "$MONARCH_TOKEN" ]; then
-     echo "ERROR: Could not read Monarch token from 1Password." >&2
-     exit 1
-   fi
-   exec node "$SKILL_DIR/monarch-bridge.mjs" "$@"
-   ```
+1. ~~Implement `monarch-bridge.mjs` with `process.argv` parsing (no heavy CLI framework).~~
+2. ~~Implement 3 core commands:~~
+   - ~~`accounts` → `getAccounts()` via `lib/accounts.mjs`~~
+   - ~~`net-worth` → computed from `getAccounts()` via `lib/accounts.mjs`~~
+   - ~~`transactions [filters]` → `getTransactions({...})` via `lib/transactions.mjs`~~
+3. ~~Create supporting lib modules: `auth.mjs`, `format.mjs`, `accounts.mjs`, `transactions.mjs`.~~
+4. Wrapper script (`monarch-bridge.sh`) deferred — token injection handled by caller.
 
-### Phase 3: Integration & Hardening
+### Phase 3: Integration & Hardening (TODO)
 
 1. Update `SKILL.md` to document the new Node.js CLI alongside the Python fallback.
-2. Test all commands end-to-end.
-3. Verify output format matches existing Python bridge for backwards compatibility.
+2. Test all commands end-to-end with a live token.
+3. Verify output format is usable for LLM consumption.
 4. Add token expiry detection and clear error messaging.
-5. Symlink or alias `monarch-bridge` in PATH to the new wrapper.
-
-### Phase 4: Deprecate Python Bridge (Conditional)
-
-If the Node.js version works reliably (no Cloudflare issues):
-1. Mark `monarch_bridge.py` as deprecated in SKILL.md.
-2. Keep it as a fallback for 90 days.
-3. Remove after confirmed stability.
-
-If Cloudflare issues persist:
-1. Wrap the Node.js CLI in the Docker/Tailscale setup from `PRD-docker.md` (simpler than wrapping Python since Node.js has fewer dependencies).
+5. Optionally create `monarch-bridge.sh` wrapper for 1Password token injection.
 
 ## API Method Reference
 
@@ -245,20 +163,7 @@ If Cloudflare issues persist:
 | Method | GraphQL Operation | Returns |
 |--------|------------------|---------|
 | `getAccounts()` | `GetAccounts` | All accounts with type, subtype, balance, institution, NW inclusion |
-| `getAccountHoldings(accountId)` | `Web_GetHoldings` | Investment holdings: security, quantity, value, basis, price change |
-| `getAccountHistory(accountId)` | `AccountDetails_getAccount` | Balance snapshots, recent transactions |
-| `getAccountTypeOptions()` | `GetAccountTypeOptions` | All valid account type/subtype combos |
-| `getRecentAccountBalances(startDate)` | `GetAccountRecentBalances` | Recent daily balances for all accounts |
 | `getTransactions({...})` | `GetTransactionsList` | Transactions with full filter support |
-| `getBudgets(start, end)` | `GetJointPlanningData` | Budget data by category with actuals vs planned |
-| `getTransactionCategories()` | `GetCategories` | All transaction categories |
-| `getCashflow({...})` | `Web_GetCashFlowPage` | Income/expense aggregates by category, merchant |
-| `getCashflowSummary({...})` | `Web_GetCashFlowPage` | Summarized income/expense/savings |
-| `getRecurringTransactions(start, end)` | `Web_GetUpcomingRecurringTransactionItems` | Recurring transaction streams |
-| `getInstitutions()` | `Web_GetInstitutionSettings` | Linked institutions and sync status |
-| `getSubscriptionDetails()` | `GetSubscriptionDetails` | Subscription status (useful for health check) |
-| `getAggregateSnapshots(start, end, type)` | `GetAggregateSnapshots` | Historical NW snapshots |
-| `getAccountSnapshotsByType(start, timeframe)` | `GetSnapshotsByAccountType` | Balance history grouped by account type |
 
 ### Mutation Methods (NOT Used — Blocked)
 
@@ -275,7 +180,6 @@ The following methods exist in the library but will **NOT** be imported or expos
 | Cloudflare bypass | Guaranteed (mobile IP exit node) | Likely (different API endpoint) |
 | Maintenance | Container rebuilds, TS key rotation | `npm update` |
 | Complexity | High | Low |
-| 529 support | Same (via Python lib) | Same (via JS lib) + dedicated command |
 | Fallback | N/A | Can wrap in Docker if needed |
 
 ## Risks & Mitigations
@@ -287,21 +191,19 @@ The following methods exist in the library but will **NOT** be imported or expos
 | Token expiry | Medium | Detect 401/403 → prompt for re-login → update 1Password |
 | Library abandoned (v0.0.4, small project) | Medium | Library is thin GraphQL wrapper; easy to fork/maintain. All queries are in `src/api.js` |
 | MFA changes | Low | Library supports TOTP via `otplib`; 1Password can store TOTP secret |
-| `getAccountHoldings` doesn't return 529 fund detail | Low | Monarch treats 529s as investment accounts; the same `Web_GetHoldings` query works for all investment types |
 
 ## Success Criteria
 
-- [ ] `monarch-bridge accounts` returns all accounts including 529 plans
-- [ ] `monarch-bridge 529` shows 529 accounts with per-fund holdings
-- [ ] `monarch-bridge net-worth` output matches Python bridge format
-- [ ] `monarch-bridge transactions --search "Amazon"` works with filters
+- [ ] `node monarch-bridge.mjs accounts` returns all accounts with balances
+- [ ] `node monarch-bridge.mjs net-worth` shows assets/liabilities/net-worth summary
+- [ ] `node monarch-bridge.mjs transactions --search "Amazon"` works with filters
 - [ ] No Cloudflare 525 errors when connecting to `api.monarchmoney.com`
-- [ ] Token injected via 1Password at runtime — no secrets in code or files
+- [ ] Token injected via `MONARCH_TOKEN` env var — no secrets in code or files
 - [ ] All mutation methods are excluded from the CLI
+- [ ] 529-specific code (`check-529.mjs`) removed from active codebase
 
 ## Open Questions
 
 1. **Cloudflare on `api.monarchmoney.com`:** Does the API subdomain have the same aggressive bot detection? Phase 1 will answer this immediately.
 2. **Token lifetime:** How long do Monarch tokens last before expiring? Need to test with the Node.js library.
-3. **529 subtype naming:** What exact `subtype.name` does Monarch use for 529 plans? Options include `"529"`, `"529_plan"`, `"education_savings"`, or `"other_investment"`. Phase 1 prototype will confirm.
-4. **Rate limiting:** Does Monarch rate-limit the API? The Python bridge hasn't hit limits, but a Node.js version making more granular calls (e.g., per-account holdings) might.
+3. **Rate limiting:** Does Monarch rate-limit the API? The Python bridge hasn't hit limits, but a Node.js version making more granular calls (e.g., per-account holdings) might.
