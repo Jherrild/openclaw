@@ -1,0 +1,14 @@
+{
+  "name": "monarch-bridge",
+  "version": "0.1.0",
+  "description": "Unofficial Monarch Money API bridge for Magnus agent",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "login": "node login.mjs",
+    "check-529": "node check-529.mjs"
+  },
+  "dependencies": {
+    "monarch-money-api": "^0.0.4"
+  }
+}
