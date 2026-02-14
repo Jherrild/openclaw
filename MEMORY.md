@@ -90,10 +90,25 @@
 
 - **Coffee Roasting Protocol:**
   - **Trigger:** Jesten starts/finishes a coffee roast.
-  - **Ambient Logging:** When a roast starts, pull ambient temp (Office) and local weather.
-  - **PARA Filing:** Use `2-Areas/Coffee Roasting/[Bean Name]/Roast Logs.md`.
-  - **Attachments:** Move graphs/photos to a `Documents/` subfolder within the bean folder and embed in the log.
-  - **Sub-agents:** Always use a sub-agent to extract data (RoR, First Crack, weight loss) from roast graphs.
+  - **Action:**
+    1.  **Remind:** "Remember the **Flick & Crash Strategy**: Drum D7, Fan Max F4, and cut power *before* First Crack."
+    2.  **Ambient Logging:** When a roast starts, pull ambient temp (Office) and local weather.
+    3.  **PARA Filing:** Use `2-Areas/Coffee Roasting/[Bean Name]/Roast Logs.md`.
+    4.  **Attachments:** Move graphs/photos to a `Documents/` subfolder within the bean folder and embed in the log.
+    5.  **Sub-agents:** Always use a sub-agent to extract data (RoR, First Crack, weight loss) from roast graphs.
+
+- **Reference: Deleted Interrupts:**
+  - **April Jane Arrived (Original):**
+    ```json
+    {
+      "id": "int-mlehw1k2-1qa8",
+      "entity_id": "person.april_jane",
+      "state": "home",
+      "label": "April Jane Arrived (30m Debounce)",
+      "instruction": "Only notify Jesten via Telegram if he is NOT home (person.jesten_herrild != 'home'). IMPORTANT: Before notifying, check the presence-log.jsonl to verify she has been away (not_home) for at least 30 consecutive minutes prior to this 'home' event. If she was home within the last 30 minutes, ignore this trigger.",
+      "channel": "telegram"
+    }
+    ```
 
 - **Google Home → Magnus Voice Bridge (Active Project):**
   - **Goal:** Enable "Hey Google, tell Magnus [message]" speech-to-text delivery.
@@ -107,7 +122,7 @@
 ## Projects
 - **Interview Prep (Nvidia):**
   - Status: **Completed** (Feb 2026)
-  - **Outcome:** Interviews concluded.
+  - **Outcome:** Interviews concluded. **Offer pending.**
   - **Real Interview Highlights:** "Merge K Lists" appeared in the real loop (Feb 2); successfully identified Heaps.
   - Workspace: `/home/jherrild/repos/practice_problems`
 

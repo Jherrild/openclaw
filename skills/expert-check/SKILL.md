@@ -22,6 +22,12 @@ Activate this skill when the user says any of:
 - "Double check this"
 - "Deep think"
 
+## Delegation Protocol (Mandatory)
+1. **Analysis Only:** The expert's primary goal is reasoning, diagnosis, and review.
+2. **No Implementation:** Experts are **FORBIDDEN** from writing final code or implementing fixes directly.
+3. **Coding Handoff:** If a code fix is required, the Expert must provide the **pseudocode or architectural plan** and explicitly instruct Magnus to "Hand this off to \`copilot-delegate\` for implementation."
+4. **Magnus (You):** You are responsible for ensuring this handoff occurs. Never allow an Expert's reasoning to bypass the \`copilot-delegate\` requirement for actual logic/code changes.
+
 ## Workflow
 
 When triggered, follow these steps:

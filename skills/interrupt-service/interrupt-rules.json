@@ -1,22 +1,5 @@
 [
   {
-    "id": "int-mlehw1k2-1qa8",
-    "source": "ha.state_change",
-    "condition": {
-      "entity_id": "person.april_jane",
-      "new_state": "home"
-    },
-    "action": "subagent",
-    "label": "April Jane Arrived (30m Debounce)",
-    "message": null,
-    "instruction": "Only notify Jesten via Telegram if he is NOT home (person.jesten_herrild != 'home'). IMPORTANT: Before notifying, check the presence-log.jsonl to verify she has been away (not_home) for at least 30 consecutive minutes prior to this 'home' event. If she was home within the last 30 minutes, ignore this trigger.",
-    "channel": "telegram",
-    "session_id": "main",
-    "one_off": false,
-    "enabled": true,
-    "created": "2026-02-09T01:30:14.114Z"
-  },
-  {
     "id": "example-email-priority",
     "source": "email",
     "condition": {
@@ -36,5 +19,125 @@
     "enabled": true,
     "label": "🦁 Voice Command",
     "message": "{{message}}"
+  },
+  {
+    "id": "rule-mljy5ktt-cbg1",
+    "source": "copilot.task_complete",
+    "condition": {},
+    "action": "message",
+    "channel": "default",
+    "session_id": "main",
+    "enabled": true,
+    "label": "Copilot Success",
+    "message": "[copilot-delegate] Success (exit 0). See skills/copilot-delegate/last-result.md",
+    "one_off": true
+  },
+  {
+    "id": "rule-mlk2u31w-96pi",
+    "source": "copilot.task_complete",
+    "condition": {},
+    "action": "message",
+    "channel": "default",
+    "session_id": "main",
+    "enabled": true,
+    "label": "Copilot Success",
+    "message": "[copilot-delegate] Success (exit 0). See skills/copilot-delegate/last-result.md",
+    "one_off": true
+  },
+  {
+    "id": "rule-mlk7viq9-6g2d",
+    "source": "copilot.task_complete",
+    "condition": {},
+    "action": "message",
+    "channel": "default",
+    "session_id": "main",
+    "enabled": true,
+    "label": "Copilot Success",
+    "message": "[copilot-delegate] Success (exit 0). See skills/copilot-delegate/last-result.md",
+    "one_off": true
+  },
+  {
+    "id": "rule-mlka8u4l-3z51",
+    "source": "copilot.task_complete",
+    "condition": {},
+    "action": "message",
+    "channel": "default",
+    "session_id": "main",
+    "enabled": true,
+    "label": "Copilot Success",
+    "message": "[copilot-delegate] Success (exit 0). See skills/copilot-delegate/last-result.md",
+    "one_off": true
+  },
+  {
+    "id": "rule-mlki5zeg-r6ie",
+    "source": "copilot.task_complete",
+    "condition": {},
+    "action": "message",
+    "channel": "default",
+    "session_id": "main",
+    "enabled": true,
+    "label": "Copilot Success",
+    "message": "[copilot-delegate] Success (exit 0). See skills/copilot-delegate/last-result.md",
+    "one_off": true
+  },
+  {
+    "id": "rule-mlkibuo9-lh9g",
+    "source": "copilot.task_complete",
+    "condition": {},
+    "action": "message",
+    "channel": "default",
+    "session_id": "main",
+    "enabled": true,
+    "label": "Copilot Success",
+    "message": "[copilot-delegate] Success (exit 0). See skills/copilot-delegate/last-result.md",
+    "one_off": true
+  },
+  {
+    "id": "rule-mlkij5mg-w6e3",
+    "source": "copilot.task_complete",
+    "condition": {},
+    "action": "message",
+    "channel": "default",
+    "session_id": "main",
+    "enabled": true,
+    "label": "Copilot Success",
+    "message": "[copilot-delegate] Success (exit 0). See skills/copilot-delegate/last-result.md",
+    "one_off": true
+  },
+  {
+    "id": "rule-mlkjq6ig-dz94",
+    "source": "copilot.task_complete",
+    "condition": {},
+    "action": "message",
+    "channel": "default",
+    "session_id": "main",
+    "enabled": true,
+    "label": "Copilot Success",
+    "message": "[copilot-delegate] Success (exit 0). See skills/copilot-delegate/last-result.md",
+    "one_off": true
+  },
+  {
+    "id": "rule-mllh5w8b-pxfl",
+    "source": "copilot.task_complete",
+    "condition": {},
+    "action": "message",
+    "channel": "default",
+    "session_id": "main",
+    "enabled": true,
+    "label": "Copilot Failure",
+    "message": "[copilot-delegate] Failure (exit 1). See skills/copilot-delegate/last-result.md",
+    "one_off": true
+  },
+  {
+    "id": "rule-mllh6usq-wiwf",
+    "source": "copilot.task_complete",
+    "condition": {},
+    "action": "message",
+    "channel": "default",
+    "session_id": "main",
+    "enabled": true,
+    "label": "Copilot Success",
+    "message": "[copilot-delegate] Success (exit 0). See skills/copilot-delegate/last-result.md",
+    "one_off": true
   }
 ]

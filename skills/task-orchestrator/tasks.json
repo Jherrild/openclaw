@@ -11,5 +11,18 @@
     "unit": "openclaw-task-supernote-sync",
     "createdAt": "2026-02-11T04:50:00.043Z",
     "enabled": true
+  },
+  "market-sentinel": {
+    "name": "market-sentinel",
+    "script": "/home/jherrild/.openclaw/workspace/skills/market-watch/sentinel.py",
+    "interval": "30m",
+    "args": "",
+    "workingDir": "/home/jherrild/.openclaw/workspace/skills/market-watch",
+    "nodePath": "",
+    "interrupt": null,
+    "interruptFile": null,
+    "unit": "openclaw-task-market-sentinel",
+    "createdAt": "2026-02-13T15:58:59.117Z",
+    "enabled": true
   }
 }

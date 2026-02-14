@@ -107,11 +107,12 @@ async function listTasks(auth, listIdOrName) {
   }
   
   tasks.forEach((task) => {
-    console.log(`[${task.status === 'completed' ? 'x' : ' '}] ${task.title} (ID: ${task.id})`);
+    const notesInfo = task.notes ? ` | Notes: ${task.notes}` : '';
+    console.log(`[${task.status === 'completed' ? 'x' : ' '}] ${task.title} (ID: ${task.id})${notesInfo}`);
   });
 }
 
-async function addTask(auth, title, listId, due) {
+async function addTask(auth, title, listId, due, notes) {
   const service = google.tasks({version: 'v1', auth});
   const targetListId = listId || PERSONAL_ID;
   
@@ -121,6 +122,10 @@ async function addTask(auth, title, listId, due) {
   
   if (due) {
       requestBody.due = due;
+  }
+  
+  if (notes) {
+      requestBody.notes = notes;
   }
   
   const res = await service.tasks.insert({
@@ -256,13 +261,16 @@ async function main() {
     const title = process.argv[3];
     const listId = process.argv[4];
     const due = process.argv[5];
-    await addTask(client, title, listId, due);
+    const notes = process.argv[6];
+    await addTask(client, title, listId, due, notes);
   } else if (command === 'add-base64') {
     const b64 = process.argv[3];
     const listId = process.argv[4];
     const due = process.argv[5];
+    const b64Notes = process.argv[6];
     const title = Buffer.from(b64, 'base64').toString('utf8');
-    await addTask(client, title, listId, due);
+    const notes = b64Notes ? Buffer.from(b64Notes, 'base64').toString('utf8') : undefined;
+    await addTask(client, title, listId, due, notes);
   } else if (command === 'add-file') {
     const filePath = process.argv[3];
     const listId = process.argv[4];
@@ -280,10 +288,10 @@ async function main() {
     const listId = process.argv[4];
     await completeTask(client, taskId, listId);
   } else {
-    console.log('Usage: node tasks.js [lists | list <listId> | add <title> <listId> | complete <taskId> <listId> | move-all <src> <dst> | delete-list <id>]');
+    console.log('Usage: node tasks.js [lists | list <listId> | add <title> [listId] [due] [notes] | complete <taskId> <listId> | move-all <src> <dst> | delete-list <id>]');
     console.log('  Robust add:');
-    console.log('    node tasks.js add --base64 <base64_title> [listId] [due]');
-    console.log('    echo "Title" | node tasks.js add --stdin [listId] [due]');
+    console.log('    node tasks.js add-base64 <base64_title> [listId] [due] [base64_notes]');
+    console.log('    node tasks.js add-file <filePath> [listId] [due]');
   }
 }
 
