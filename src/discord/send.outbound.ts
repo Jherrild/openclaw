@@ -21,10 +21,12 @@ import {
   parseAndResolveRecipient,
   resolveChannelId,
   resolveDiscordSendComponents,
+  resolveDiscordSendEmbeds,
   sendDiscordMedia,
   sendDiscordText,
   stripUndefinedFields,
   type DiscordSendComponents,
+  type DiscordSendEmbeds,
 } from "./send.shared.js";
 import {
   ensureOggOpus,
@@ -41,6 +43,7 @@ type DiscordSendOpts = {
   replyTo?: string;
   retry?: RetryConfig;
   components?: DiscordSendComponents;
+  embeds?: DiscordSendEmbeds;
   silent?: boolean;
 };
 
@@ -104,10 +107,12 @@ export async function sendMessageDiscord(
       text: starterContent,
       isFirst: true,
     });
+    const starterEmbeds = resolveDiscordSendEmbeds({ embeds: opts.embeds, isFirst: true });
     const silentFlags = opts.silent ? 1 << 12 : undefined;
     const starterPayload: MessagePayloadObject = buildDiscordMessagePayload({
       text: starterContent,
       components: starterComponents,
+      embeds: starterEmbeds,
       flags: silentFlags,
     });
     let threadRes: { id: string; message?: { id: string; channel_id: string } };
@@ -148,6 +153,7 @@ export async function sendMessageDiscord(
           request,
           accountInfo.config.maxLinesPerMessage,
           undefined,
+          undefined,
           chunkMode,
           opts.silent,
         );
@@ -159,6 +165,7 @@ export async function sendMessageDiscord(
             undefined,
             request,
             accountInfo.config.maxLinesPerMessage,
+            undefined,
             undefined,
             chunkMode,
             opts.silent,
@@ -173,6 +180,7 @@ export async function sendMessageDiscord(
             undefined,
             request,
             accountInfo.config.maxLinesPerMessage,
+            undefined,
             undefined,
             chunkMode,
             opts.silent,
@@ -211,6 +219,7 @@ export async function sendMessageDiscord(
         request,
         accountInfo.config.maxLinesPerMessage,
         opts.components,
+        opts.embeds,
         chunkMode,
         opts.silent,
       );
@@ -223,6 +232,7 @@ export async function sendMessageDiscord(
         request,
         accountInfo.config.maxLinesPerMessage,
         opts.components,
+        opts.embeds,
         chunkMode,
         opts.silent,
       );

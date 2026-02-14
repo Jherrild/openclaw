@@ -1,6 +1,6 @@
 import type { AgentToolResult } from "@mariozechner/pi-agent-core";
 import type { DiscordActionConfig } from "../../config/config.js";
-import type { DiscordSendComponents } from "../../discord/send.shared.js";
+import type { DiscordSendComponents, DiscordSendEmbeds } from "../../discord/send.shared.js";
 import {
   createThreadDiscord,
   deleteMessageDiscord,
@@ -246,6 +246,10 @@ export async function handleDiscordMessagingAction(
         Array.isArray(rawComponents) || typeof rawComponents === "function"
           ? (rawComponents as DiscordSendComponents)
           : undefined;
+      const rawEmbeds = params.embeds;
+      const embeds: DiscordSendEmbeds | undefined = Array.isArray(rawEmbeds)
+        ? (rawEmbeds as DiscordSendEmbeds)
+        : undefined;
 
       // Handle voice message sending
       if (asVoice) {
@@ -277,6 +281,7 @@ export async function handleDiscordMessagingAction(
         mediaUrl,
         replyTo,
         components,
+        embeds,
         silent,
       });
       return jsonResult({ ok: true, result });

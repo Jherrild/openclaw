@@ -10,11 +10,18 @@ metadata: {"openclaw":{"emoji":"🎮","requires":{"config":["channels.discord"]}
 
 Use `discord` to manage messages, reactions, threads, polls, and moderation. You can disable groups via `discord.actions.*` (defaults to enabled, except roles/moderation). The tool uses the bot token configured for OpenClaw.
 
+Guidelines:
+
+- Avoid Markdown tables in outbound Discord messages.
+- Mention users as `<@USER_ID>`.
+- Prefer Discord components v2 (`components`) for rich UI; use legacy `embeds` only when you must.
+
 ## Inputs to collect
 
 - For reactions: `channelId`, `messageId`, and an `emoji`.
 - For fetchMessage: `guildId`, `channelId`, `messageId`, or a `messageLink` like `https://discord.com/channels/<guildId>/<channelId>/<messageId>`.
 - For stickers/polls/sendMessage: a `to` target (`channel:<id>` or `user:<id>`). Optional `content` text.
+- Optional message formatting: `components` (Discord components v2 via Carbon component instances) or legacy `embeds` (not recommended).
 - Polls also need a `question` plus 2–10 `answers`.
 - For media: `mediaUrl` with `file:///path` for local files or `https://...` for remote.
 - For emoji uploads: `guildId`, `name`, `mediaUrl`, optional `roleIds` (limit 256KB, PNG/JPG/GIF).
@@ -193,6 +200,34 @@ Use `discord.actions.*` to disable action groups:
 - `to` uses format `channel:<id>` or `user:<id>` for DMs (not `channelId`!)
 - `mediaUrl` supports local files (`file:///path/to/file`) and remote URLs (`https://...`)
 - Optional `replyTo` with a message ID to reply to a specific message
+- Optional `silent: true` to suppress Discord notifications
+
+**With components v2 (recommended for rich UI):**
+
+```json
+{
+  "action": "sendMessage",
+  "to": "channel:123",
+  "content": "Status update",
+  "components": "[Carbon v2 components]"
+}
+```
+
+- `components` expects Carbon component instances (Container, TextDisplay, etc.) from JS/TS integrations.
+- Do not combine `components` with `embeds` (Discord rejects v2 + embeds).
+
+**Legacy embeds (not recommended):**
+
+```json
+{
+  "action": "sendMessage",
+  "to": "channel:123",
+  "content": "Status update",
+  "embeds": [{ "title": "Legacy", "description": "Embeds are legacy." }]
+}
+```
+
+- `embeds` are ignored when components v2 are present.
 
 ```json
 {
