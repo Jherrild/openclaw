@@ -28,7 +28,7 @@ That's it. The wrapper handles model selection (`claude-opus-4.6`), permissions,
 
 ### Check Results
 
-No polling needed — an interrupt notification fires on completion. Then:
+No polling needed — an interrupt notification fires on completion. Copilot also proactively messages you via `openclaw agent --deliver` if blocked or finished during long tasks. You can fully context-switch to other work after delegating. Then:
 
 ```bash
 cat skills/copilot-delegate/last-result.md
