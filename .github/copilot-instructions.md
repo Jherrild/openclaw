@@ -273,7 +273,43 @@ Ollama cloud models had no explicit context window configuration, causing OpenCl
 - `openclaw agent -m "ping" --agent main` — send test message to agent via CLI
 
 ### Skills Watcher EMFILE Warnings
-The skills file watcher hits `EMFILE: too many open files` because it watches all files recursively including `node_modules/` (~19,700 files in `skills/`). This is a [known upstream bug](https://github.com/openclaw/openclaw/issues/8851). **These warnings are cosmetic** — they only affect hot-reload of skill changes, not initial skill discovery/loading. Skills load fine despite the warnings.
+The skills file watcher hits `EMFILE: too many open files` on v2026.2.9 and earlier. **Fixed in v2026.2.13** — the watcher now uses `*/SKILL.md` glob patterns (not recursive tree watching) with node_modules in the ignore list. Updating OpenClaw resolves this. The warnings are cosmetic — they only affect hot-reload, not initial skill loading.
+
+### OpenClaw CLI Operations (2026-02-14 Evening Session)
+
+**Useful commands:**
+```bash
+openclaw gateway restart                    # Restart, lint config, show errors
+openclaw agent -m "msg" --agent main        # Send message to agent (CLI output only)
+openclaw agent -m "msg" --agent main --deliver  # Send AND deliver to Telegram
+openclaw hooks list                         # Show registered hooks and status
+openclaw logs --follow                      # Tail gateway logs
+```
+
+**Hook system:**
+- Custom hooks go in `~/.openclaw/hooks/<name>/` with `HOOK.md` (YAML frontmatter: name, events, description) + `handler.js`
+- Handler exports a default async function receiving `(event)` with `{type, action, sessionKey, context, messages}`
+- Events: `command:new`, `command:reset`, `gateway:startup`, `agent:bootstrap`
+- Push messages back to agent by appending to `event.messages[]`
+
+**Memory system internals (for provider work):**
+- Default chunking: 400 tokens, 80 overlap
+- Default hybrid search: 0.7 vector + 0.3 text (linear combination)
+- Default limits: 6 max results, 0.35 min score, 4× candidate multiplier
+- Embedding: `node-llama-cpp` with `embeddinggemma-300m` GGUF (ships with OpenClaw, no Ollama needed)
+- Config resolution: `src/agents/memory-search.ts` → `ResolvedMemorySearchConfig`
+- Provider factory: `src/memory/search-manager.ts` → `getMemorySearchManager()`
+- Source: `~/openclaw-fork/` (Jherrild/openclaw, forked from v2026.2.13)
+
+**Session mode detection:**
+- `$COPILOT_MODE` = `"delegated"` when started via `copilot-lock.sh -p` (non-interactive)
+- Unset when interactive. In delegated mode: write `last-result.md`, notify Magnus via interrupt + `openclaw agent --deliver`
+
+**WSL2 + Obsidian:**
+- Direct filesystem via `/mnt/c/` works reliably for reads and writes
+- Obsidian REST API plugin binds to 127.0.0.1 only — unreachable from WSL2 without mirrored networking
+- WSL2 `networkingMode=mirrored` would fix this but is a global networking change (port conflict risks)
+- Decision: use direct filesystem, not REST API
 
 ---
 
