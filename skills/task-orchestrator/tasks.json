@@ -24,5 +24,18 @@
     "unit": "openclaw-task-market-sentinel",
     "createdAt": "2026-02-13T15:58:59.117Z",
     "enabled": true
+  },
+  "nightly-review": {
+    "name": "nightly-review",
+    "script": "/home/jherrild/.openclaw/workspace/scripts/nightly-review/nightly-review.sh",
+    "interval": "24h",
+    "args": "",
+    "workingDir": "/home/jherrild/.openclaw/workspace",
+    "nodePath": "",
+    "interrupt": "info: Nightly review report generated. Check the Obsidian vault for the full report.",
+    "interruptFile": null,
+    "unit": "openclaw-task-nightly-review",
+    "createdAt": "2026-02-14T08:44:34.000Z",
+    "enabled": true
   }
 }

@@ -1,0 +1,53 @@
+You are running as a nightly automated review of the OpenClaw workspace. Your job is to find problems, improvements, and efficiency wins.
+
+## Review Checklist
+
+1. **Session Logs** — Check today's session logs in ~/.openclaw/agents/main/sessions/ for:
+   - Repeated errors or failures
+   - Repetitive multi-step operations that could be a skill
+   - Token-heavy patterns (large file reads, verbose tool output)
+   - Failed tool calls or degraded model behavior
+
+2. **Bootstrap Files** — Review AGENTS.md, MEMORY.md, USER.md, TOOLS.md, HEARTBEAT.md for:
+   - Stale information (outdated project status, completed items still listed)
+   - Token waste (verbose sections that could be compressed)
+   - Missing information that would help the agent
+
+3. **Skills** — Scan all skills/*/SKILL.md for:
+   - Missing YAML frontmatter (invisible skills)
+   - Stale references to changed interfaces
+   - Redundancy between skills
+   - Oversized SKILL.md files that waste Magnus's tokens
+
+4. **Git Activity** — Check `git log --since="24 hours ago"` for:
+   - Uncommitted changes that should be committed
+   - Patterns in what's being changed frequently
+
+5. **Task Health** — Run `node skills/task-orchestrator/orchestrator.js list` to check:
+   - Failed or disabled tasks
+   - Tasks that haven't run recently
+
+## Output
+
+Generate a report and save it using obsidian-scribe:
+
+```bash
+node skills/obsidian-scribe/write.js \
+  --title "OpenClaw Nightly Review — $(date +%Y-%m-%d)" \
+  --folder "1-Projects/OpenClaw/Nightly Reviews" \
+  --tags "openclaw,nightly-review,automated" \
+  --content "<your report>"
+```
+
+The report should use this structure:
+- **## Issues Found** — bugs, errors, failures (with severity)
+- **## Efficiency Wins** — token savings, compression opportunities
+- **## Proposed Skills** — repetitive operations that deserve automation
+- **## Stale Content** — outdated info in bootstrap/skill files
+- **## Action Items** — prioritized TODO list
+
+After saving to Obsidian, output a 2-3 sentence summary to stdout including:
+- Count of findings by category
+- The vault path where the full report was saved
+
+Keep the report concise — focus on actionable findings, not exhaustive audits.

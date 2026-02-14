@@ -44,3 +44,9 @@ Transform the user's task list from a "write-only" graveyard into an actionable,
 *   **Review Rate:** User engages with the "Morning Briefing" >50% of the time.
 *   **List Hygiene:** Active Google Tasks list stays under 50 items.
 *   **Alignment:** Nudges match the user's current project focus.
+
+## Review Notes (2026-02-14)
+
+- **Structure:** Weak — missing technical architecture, CLI/API design, implementation phases.
+- **Missing:** Schema for priority rules (how is "urgency" evaluated?). Conflict resolution for parallel user edits. Concrete success criteria.
+- **Recommendation:** Should merge INTO google-tasks as a `triage` subcommand. Define priority evaluation algorithm. Add concrete schema for P0/P1/P2 classification rules. Strengthen success criteria.

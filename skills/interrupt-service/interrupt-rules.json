@@ -139,5 +139,52 @@
     "label": "Copilot Success",
     "message": "[copilot-delegate] Success (exit 0). See skills/copilot-delegate/last-result.md",
     "one_off": true
+  },
+  {
+    "id": "rule-mlm22r9d-8pfn",
+    "source": "copilot.task_complete",
+    "condition": {},
+    "action": "message",
+    "channel": "default",
+    "session_id": "main",
+    "enabled": true,
+    "label": "Copilot Success",
+    "message": "[copilot-delegate] Success (exit 0). See skills/copilot-delegate/last-result.md",
+    "one_off": true
+  },
+  {
+    "id": "rule-mlm23qg6-4yy5",
+    "source": "copilot.task_complete",
+    "condition": {},
+    "action": "message",
+    "channel": "default",
+    "session_id": "main",
+    "enabled": true,
+    "label": "Copilot Success",
+    "message": "[copilot-delegate] Success (exit 0). See skills/copilot-delegate/last-result.md",
+    "one_off": true
+  },
+  {
+    "id": "rule-mlm23qlh-iy8s",
+    "source": "copilot.task_complete",
+    "condition": {},
+    "action": "message",
+    "channel": "default",
+    "session_id": "main",
+    "enabled": true,
+    "label": "Copilot Success",
+    "message": "[copilot-delegate] Success (exit 0). See skills/copilot-delegate/last-result.md",
+    "one_off": true
+  },
+  {
+    "id": "rule-mlm2mld7-g614",
+    "source": "task.nightly-review",
+    "condition": {},
+    "action": "message",
+    "channel": "default",
+    "session_id": "main",
+    "enabled": true,
+    "label": "Nightly Review Complete",
+    "message": "Nightly review report ready. Check Obsidian vault: 1-Projects/OpenClaw/Nightly Reviews/"
   }
 ]

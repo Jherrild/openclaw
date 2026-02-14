@@ -77,3 +77,9 @@ It decouples **collection** (dumb scripts) from **evaluation** (semantic filteri
 ## 5. Iteration Questions
 - **Embedding Source:** Should we rely on a local model (Ollama) for zero-cost, or an API (OpenAI/Gemini) for quality?
 - **Feedback Loop:** How do we easily "mark as not important" to improve future filtering?
+
+## Review Notes (2026-02-14)
+
+- **Structure:** Good components and JSON schemas.
+- **Missing:** Feedback loop for model tuning. Embedding source decision (Ollama vs OpenAI). No success criteria. No integration with interrupt-service outlined.
+- **Recommendation:** Should merge INTO interrupt-service as a filter/preprocessor component, not remain a separate skill. Define embedding source. Add feedback mechanism for false positives/negatives.

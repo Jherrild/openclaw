@@ -59,3 +59,9 @@ Current "heavy" operations (e.g., `npm install`, `find /`, large builds) risk:
 
 ## 6. Integration
 *   **Agent Policy:** Update `AGENTS.md` to mandate `process-manager` for any task expected to take >10s or generate >50 lines of output.
+
+## Review Notes (2026-02-14)
+
+- **Structure:** Strong with clean API design.
+- **Missing:** Registry cleanup policy (jobs.json unbounded growth). No retry/timeout for failed jobs. Missing log rotation for /tmp/openclaw/logs/.
+- **Recommendation:** Should merge INTO task-orchestrator as a `run-bg` subcommand. Add jobs.json max size + rotation policy. Add configurable timeout per job. Define log cleanup strategy.

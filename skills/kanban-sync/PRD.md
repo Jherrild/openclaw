@@ -51,3 +51,9 @@ Provide a visual, flow-based view of work-in-progress (WIP) for tasks discussed 
 *   **Visibility:** User stops asking "What are you working on?" and checks the board.
 *   **Flow:** Tasks move from Inbox to Done with clear state transitions.
 *   **Capture:** No "we discussed this" items are lost; they land in Inbox.
+
+## Review Notes (2026-02-14)
+
+- **Structure:** Moderate — missing implementation phases and technical detail.
+- **Missing:** Bi-directional sync conflict resolution. API error handling / rate limit policy. No timeline or phases.
+- **Recommendation:** Add phased implementation plan. Define conflict resolution (agent wins? UI wins? merge?). Add GitHub API rate limit handling. Keep separate from task-triage.
