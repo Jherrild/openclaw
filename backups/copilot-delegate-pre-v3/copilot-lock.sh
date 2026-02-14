@@ -1,90 +1,35 @@
 #!/usr/bin/env bash
-# copilot-lock.sh — Mutex wrapper for Copilot CLI (v3)
-# Ensures only one Copilot CLI instance runs at a time.
-# Hardcodes model, flags, and session transcript. Magnus only provides -p "task".
+# copilot-lock.sh — Mutex wrapper for Copilot CLI
+# Ensures only one Copilot CLI instance runs at a time via lock file.
+# All arguments are passed through to the copilot CLI.
 #
-# Usage: bash copilot-lock.sh -p "Fix the bug"
-#        bash copilot-lock.sh -p "Fix the bug" --add-dir /path/to/repo
-#        bash copilot-lock.sh --continue
-#        bash copilot-lock.sh --resume <session-id>
+# Usage: bash copilot-lock.sh [--notify-session <id>] [copilot args...]
+# Example: bash copilot-lock.sh -p "Fix the bug" --model claude-opus-4.6 --allow-all
+# Example: bash copilot-lock.sh --notify-session main -p "Fix the bug" --model claude-opus-4.6 --allow-all
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORKSPACE_DIR="$HOME/.openclaw/workspace"
 LOCKFILE="${SCRIPT_DIR}/.copilot.lock"
 COPILOT_BIN="${COPILOT_BIN:-copilot}"
 INTERRUPT_CLI="${SCRIPT_DIR}/../interrupt-service/interrupt-cli.js"
-SESSION_DIR="${SCRIPT_DIR}/sessions"
 
-# --- Hardcoded defaults (not overridable by Magnus) ---
-MODEL="claude-opus-4.6"
-SHARE_PATH="${SESSION_DIR}/$(date +%s).md"
-
-# --- Suffix appended to every prompt ---
-SUFFIX='
-When finished, overwrite skills/copilot-delegate/last-result.md with a brief summary (keep under 300 words — Magnus has limited context):
-- What you understood the task to be
-- What you did
-- Status: Success/Partial/Failed
-- Follow-up items
-
-Auto-commit changed files with conventional commit messages.'
-
-# --- Parse arguments ---
+# --- Parse --notify-session flag (consumed here, not passed to copilot) ---
 NOTIFY_SESSION="${OPENCLAW_SESSION_ID:-main}"
 COPILOT_EXECUTED=false
-USER_PROMPT=""
-PASSTHROUGH_ARGS=()
-IS_RESUME=false
-
+COPILOT_ARGS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --notify-session)
       NOTIFY_SESSION="${2:?--notify-session requires a session ID}"
       shift 2
       ;;
-    -p)
-      USER_PROMPT="${2:?-p requires a prompt}"
-      shift 2
-      ;;
-    --resume)
-      IS_RESUME=true
-      PASSTHROUGH_ARGS+=("$1" "${2:?--resume requires a session ID}")
-      shift 2
-      ;;
-    --continue)
-      IS_RESUME=true
-      PASSTHROUGH_ARGS+=("$1")
-      shift
-      ;;
-    --add-dir)
-      PASSTHROUGH_ARGS+=("$1" "${2:?--add-dir requires a path}")
-      shift 2
-      ;;
     *)
-      PASSTHROUGH_ARGS+=("$1")
+      COPILOT_ARGS+=("$1")
       shift
       ;;
   esac
 done
-
-# Validate: need either a prompt or a resume flag
-if [[ -z "$USER_PROMPT" && "$IS_RESUME" != "true" ]]; then
-  echo "Error: Provide -p \"task\" or --resume/--continue" >&2
-  exit 1
-fi
-
-# Build the copilot arguments
-COPILOT_ARGS=(--model "$MODEL" --allow-all --share "$SHARE_PATH")
-
-if [[ -n "$USER_PROMPT" ]]; then
-  COPILOT_ARGS+=(-p "${USER_PROMPT}
-
-${SUFFIX}")
-fi
-
-COPILOT_ARGS+=("${PASSTHROUGH_ARGS[@]}")
 
 # --- Configuration ---
 MAX_WAIT_SECS="${COPILOT_LOCK_TIMEOUT:-600}"   # 10 min max wait
@@ -255,9 +200,7 @@ while true; do
   fi
 done
 
-# Execute copilot from workspace directory (required for copilot-instructions.md)
-mkdir -p "$SESSION_DIR"
+# Execute copilot with all passed arguments
 COPILOT_EXECUTED=true
 log "Executing: $COPILOT_BIN ${COPILOT_ARGS[*]:-}"
-cd "$WORKSPACE_DIR"
 "$COPILOT_BIN" "${COPILOT_ARGS[@]}"
