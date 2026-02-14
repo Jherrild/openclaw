@@ -331,4 +331,4 @@ openclaw agent -m "Magnus, please tell Jesten: '<message>'" --agent main --deliv
 ```
 
 The `--deliver` flag ensures Magnus actually sends it to Telegram (not just replies in the CLI).
-Use this to notify the user when: blocked and need input, finished a long task, or encountered a critical error.
+Use this to notify the user when: blocked and need input, finished a long task, encountered a critical error, or completed all planned work. Keep notifying via Magnus until the user says to stop.
