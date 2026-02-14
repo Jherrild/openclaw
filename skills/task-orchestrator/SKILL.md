@@ -1,3 +1,8 @@
+---
+name: task-orchestrator
+description: Systemd-backed task scheduler. Register arbitrary scripts on intervals with optional interrupt-on-output integration.
+---
+
 # Task Orchestrator Skill
 
 A lightweight, systemd-backed task scheduler for managing arbitrary scripts on a schedule WITHOUT spawning AI sub-agents unless explicitly needed.

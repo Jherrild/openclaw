@@ -1,0 +1,38 @@
+{
+  "symbols": {
+    "AVGO": {
+      "alert_down_pct": 5,
+      "alert_up_pct": 5,
+      "alert_price": 340.0,
+      "alert_below": 320.0
+    },
+    "MSFT": {
+      "alert_down_pct": 5.0,
+      "alert_up_pct": 5.0
+    },
+    "SPY": {
+      "alert_down_pct": 5.0,
+      "alert_up_pct": 5.0,
+      "alert_price": 0.0
+    },
+    "IAU": {
+      "alert_down_pct": 5.0,
+      "alert_up_pct": 5.0
+    },
+    "SLV": {
+      "alert_down_pct": 5.0,
+      "alert_up_pct": 5.0
+    },
+    "URNM": {
+      "alert_down_pct": 5.0,
+      "alert_up_pct": 5.0
+    },
+    "NVDA": {
+      "alert_down_pct": 5.0,
+      "alert_up_pct": 5.0
+    }
+  },
+  "defaults": {
+    "poll_interval_min": 5
+  }
+}

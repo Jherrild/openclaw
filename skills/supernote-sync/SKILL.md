@@ -1,3 +1,8 @@
+---
+name: supernote-sync
+description: Sync Supernote .note files from Google Drive to Obsidian with PARA categorization. Runs as a scheduled daemon via task-orchestrator.
+---
+
 # Supernote Google Drive Sync Skill
 
 Synchronizes `.note` files from Google Drive (Supernote backup folder) to the Obsidian vault with intelligent PARA categorization. Notes are converted to PDF + extracted text, then stored as Obsidian-native markdown with embedded PDFs.

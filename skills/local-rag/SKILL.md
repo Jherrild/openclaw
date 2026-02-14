@@ -1,3 +1,8 @@
+---
+name: local-rag
+description: Hybrid semantic + keyword search across Obsidian vault and workspace using local SQLite vector DB and Ollama embeddings.
+---
+
 # SKILL.md - Local RAG (Obsidian Semantic Search)
 
 ## Description

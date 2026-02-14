@@ -1,3 +1,8 @@
+---
+name: google-home-bridge
+description: Bridge between Google Home voice commands (via IFTTT) and Magnus through Home Assistant events and the interrupt service.
+---
+
 # Skill: Google Home Bridge
 
 This skill provides a bridge between Google Home (via IFTTT) and Magnus.

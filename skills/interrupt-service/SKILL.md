@@ -1,3 +1,8 @@
+---
+name: interrupt-service
+description: Centralized event orchestration daemon. Matches events from collectors (HA, email, system) against rules and dispatches via batched, rate-limited pipelines.
+---
+
 # Interrupt Service
 
 ## Overview
