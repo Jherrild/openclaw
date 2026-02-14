@@ -326,7 +326,30 @@ Detection: compare comment author against the authenticated `gh` user. If differ
 
 ---
 
-## 8. Future Improvements
+## 8. Implementation Safety (Shared Worktree)
+
+Magnus and Copilot share the same working tree. The mutex lock prevents concurrent Copilot sessions but does NOT prevent Magnus from using skills that Copilot is modifying. This is manageable because:
+
+**Stages 1-3 are safe by design** — drafting, reviewing, and awaiting approval only create/modify PRD files and issue comments. No skill code changes.
+
+**Stage 4 (implementation) requires care:**
+
+1. **New-file-first pattern** — write new modules alongside existing ones (e.g., `lib/api.js` next to `write.js`), then update the entry point last. Magnus continues using the old path until the shim is atomically swapped.
+
+2. **Atomic file swaps** — when updating an existing file, write to `file.tmp`, then `fs.renameSync('file.tmp', 'file')`. POSIX `rename()` is atomic — Magnus never sees a half-written file.
+
+3. **Human knows it's coming** — implementation only runs after explicit `copilot:approved` label. The user can time approvals to low-activity periods if needed.
+
+**Remaining risk:** Memory-related skills (`local-rag`, `obsidian-scribe`) that Magnus may invoke autonomously in the background (e.g., during memory search on a user question). These can't be easily timed around. Mitigations:
+- Prefer additive changes (new files) over in-place rewrites
+- If a rewrite is necessary, do it in a single atomic commit — minimize the window
+- The daemon could post a "⚠️ Modifying active skill: local-rag" warning to Magnus before starting, giving him a chance to complete any in-flight operations
+
+This doesn't eliminate all risk, but reduces the window to seconds (atomic rename) for a collision that requires Magnus to invoke the exact skill being modified at the exact moment of the swap.
+
+---
+
+## 9. Future Improvements
 
 ### 8.1 Incognito Mode (No GitHub Writes)
 
@@ -377,7 +400,7 @@ If a Copilot session was interrupted (crash, timeout), the daemon could `--resum
 
 ---
 
-## 9. Implementation Stages
+## 10. Implementation Stages
 
 ### Stage 1: Core Pipeline (MVP)
 - [ ] `init.sh` — create labels, validate `gh` and `copilot` auth
@@ -409,7 +432,7 @@ If a Copilot session was interrupted (crash, timeout), the daemon could `--resum
 
 ---
 
-## 10. Test Plan
+## 11. Test Plan
 
 | Test | Input | Expected |
 |------|-------|----------|
@@ -426,7 +449,7 @@ If a Copilot session was interrupted (crash, timeout), the daemon could `--resum
 
 ---
 
-## 11. Dependencies
+## 12. Dependencies
 
 - `gh` CLI (authenticated)
 - `copilot` CLI (authenticated)
@@ -437,7 +460,7 @@ If a Copilot session was interrupted (crash, timeout), the daemon could `--resum
 
 ---
 
-## 12. References
+## 13. References
 
 | Resource | Location |
 |----------|----------|
