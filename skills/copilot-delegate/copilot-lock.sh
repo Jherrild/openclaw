@@ -79,6 +79,7 @@ fi
 COPILOT_ARGS=(--model "$MODEL" --allow-all --share "$SHARE_PATH")
 
 if [[ -n "$USER_PROMPT" ]]; then
+  export COPILOT_MODE="delegated"
   COPILOT_ARGS+=(-p "${USER_PROMPT}
 
 ${SUFFIX}")
