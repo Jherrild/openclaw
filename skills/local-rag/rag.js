@@ -10,8 +10,8 @@
  */
 import fs from 'fs';
 import path from 'path';
-import { openDb, insertChunk, deleteFile, deleteFileMetadata, getAllDocuments, getDocCount, clearAll, getDbPath, insertFileMetadata, getAllFileMetadata, getFileMtimes, updateFileMtime, findSourceDirForFile, vectorSearch, keywordSearch, reciprocalRankFusion, entityShortcut } from './db.js';
-import { checkOllama, embed, embedBatch, cosineSimilarity, chat } from './embeddings.js';
+import { openDb, insertChunk, deleteFile, deleteFileMetadata, getDocCount, clearAll, getDbPath, insertFileMetadata, getFileMetadata, getAllFileMetadata, getFileMtimes, updateFileMtime, findSourceDirForFile, vectorSearch, keywordSearch, reciprocalRankFusion, entityShortcut } from './db.js';
+import { checkOllama, embed, embedBatch, chat } from './embeddings.js';
 import { predictPara } from './para-predict.js';
 
 const CONFIG = JSON.parse(fs.readFileSync(new URL('./config.json', import.meta.url)));
@@ -131,19 +131,26 @@ function splitAtSentences(text, maxSize) {
   return chunks;
 }
 
-// Paragraph-aware chunking: preserves semantic coherence
-function chunkText(text, maxChunkSize) {
+// Paragraph-aware chunking with configurable overlap
+function chunkText(text, maxChunkSize, overlapSize) {
   maxChunkSize = maxChunkSize || CONFIG.chunk_size || 800;
+  overlapSize = overlapSize || CONFIG.chunk_overlap || 0;
   const paragraphs = text.split(/\n\n+/);
   const chunks = [];
   let current = '';
+  let prevTail = ''; // overlap carry-over from previous chunk
 
   for (const para of paragraphs) {
     if (current.length + para.length > maxChunkSize && current.length > 0) {
       chunks.push(current.trim());
-      current = '';
+      // Carry overlap: keep last N chars from current chunk
+      if (overlapSize > 0) {
+        prevTail = current.slice(-overlapSize);
+      }
+      current = prevTail ? prevTail + '\n\n' + para : para;
+    } else {
+      current += (current ? '\n\n' : '') + para;
     }
-    current += (current ? '\n\n' : '') + para;
   }
   if (current.trim()) chunks.push(current.trim());
 
@@ -340,128 +347,78 @@ async function cmdSearch(query, dirPath) {
     process.exit(1);
   }
   
-  // Check Ollama
+  const db = openDb(absDir);
+  const docCount = getDocCount(db);
+  
+  console.log(`Searching ${docCount} chunks for: "${query}"\n`);
+
+  // 1. Entity shortcut — exact filename/alias match returns immediately
+  const entityMatch = entityShortcut(db, query);
+  if (entityMatch) {
+    const meta = getFileMetadata(db, entityMatch);
+    const relPath = path.relative(absDir, entityMatch);
+    console.log(`⚡ Entity match: ${relPath}`);
+    if (meta) {
+      console.log(`   Title: ${meta.title || meta.filename}`);
+      console.log(`   Tags: ${meta.tags || '[]'}`);
+    }
+    console.log();
+    // Still run full search below to find related context
+  }
+
+  // 2. Check Ollama for embedding
   if (!await checkOllama()) {
     console.error('Ollama is not reachable. Run: ollama serve');
     process.exit(1);
   }
   
-  const db = openDb(absDir);
-  const docs = getAllDocuments(db);
-  const fileMetadata = getAllFileMetadata(db);
-  
-  // Build metadata lookup by file path
-  const metadataByFile = {};
-  for (const meta of fileMetadata) {
-    metadataByFile[meta.file_path] = meta;
-  }
-  
-  console.log(`Searching ${docs.length} chunks for: "${query}"\n`);
-  
-  // Embed query
+  // 3. Embed query
   const queryEmb = await embed(query);
-  
-  // Normalize query for keyword matching
-  const queryLower = query.toLowerCase().trim();
-  const queryTerms = queryLower.split(/\s+/).filter(t => t.length > 1);
-  
-  // Calculate hybrid scores per file
-  const fileScores = {};
-  
-  for (const doc of docs) {
-    const vectorScore = cosineSimilarity(queryEmb, doc.embedding);
-    const meta = metadataByFile[doc.file_path];
-    
-    if (!fileScores[doc.file_path]) {
-      fileScores[doc.file_path] = {
-        file_path: doc.file_path,
-        bestChunk: doc,
-        vectorScore: vectorScore,
-        metadataBoost: 0,
-        chunks: []
-      };
-      
-      // Calculate metadata boost (only once per file)
-      if (meta) {
-        const filenameLower = meta.filename.toLowerCase();
-        const titleLower = (meta.title || '').toLowerCase();
-        const aliasesLower = (meta.aliases || []).map(a => a.toLowerCase());
-        const tagsLower = (meta.tags || []).map(t => t.toLowerCase());
-        
-        // Exact filename match (highest boost)
-        if (filenameLower === queryLower || titleLower === queryLower) {
-          fileScores[doc.file_path].metadataBoost += 0.5;
-        }
-        // Partial filename/title match
-        else if (filenameLower.includes(queryLower) || queryLower.includes(filenameLower)) {
-          fileScores[doc.file_path].metadataBoost += 0.3;
-        }
-        else if (titleLower.includes(queryLower) || queryLower.includes(titleLower)) {
-          fileScores[doc.file_path].metadataBoost += 0.25;
-        }
-        
-        // Alias exact match (very high boost)
-        for (const alias of aliasesLower) {
-          if (alias === queryLower) {
-            fileScores[doc.file_path].metadataBoost += 0.45;
-            break;
-          } else if (alias.includes(queryLower) || queryLower.includes(alias)) {
-            fileScores[doc.file_path].metadataBoost += 0.2;
-          }
-        }
-        
-        // Tag matches
-        for (const tag of tagsLower) {
-          for (const term of queryTerms) {
-            if (tag === term || tag.includes(term)) {
-              fileScores[doc.file_path].metadataBoost += 0.1;
-            }
-          }
-        }
-        
-        // Cap metadata boost at 0.6
-        fileScores[doc.file_path].metadataBoost = Math.min(fileScores[doc.file_path].metadataBoost, 0.6);
-      }
-    }
-    
-    // Track best vector score for this file
-    if (vectorScore > fileScores[doc.file_path].vectorScore) {
-      fileScores[doc.file_path].vectorScore = vectorScore;
-      fileScores[doc.file_path].bestChunk = doc;
-    }
-    
-    fileScores[doc.file_path].chunks.push({ ...doc, vectorScore });
-  }
-  
-  // Calculate final hybrid scores
-  const results = Object.values(fileScores).map(fs => ({
-    ...fs.bestChunk,
-    vectorScore: fs.vectorScore,
-    metadataBoost: fs.metadataBoost,
-    hybridScore: fs.vectorScore + fs.metadataBoost,
-    allChunks: fs.chunks
-  }));
-  
-  // Sort by hybrid score (highest first)
-  results.sort((a, b) => b.hybridScore - a.hybridScore);
-  
-  // Return top K files
-  const topK = results.slice(0, CONFIG.top_k);
-  
-  console.log('Results:\n');
-  for (let i = 0; i < topK.length; i++) {
-    const r = topK[i];
+
+  // 4. Parallel: sqlite-vec KNN + FTS5 BM25
+  const vecResults = vectorSearch(db, queryEmb);
+  const ftsResults = keywordSearch(db, query);
+
+  // 5. Reciprocal Rank Fusion
+  const fused = reciprocalRankFusion(vecResults, ftsResults);
+
+  // 6. Apply minScore filter and limit
+  const minScore = CONFIG.min_score || 0;
+  const topK = fused
+    .filter(r => r.rrf_score >= minScore)
+    .slice(0, CONFIG.top_k || 20);
+
+  // 7. Enrich results with metadata and best chunk content
+  const enriched = topK.map(r => {
+    const meta = getFileMetadata(db, r.file_path);
     const relPath = path.relative(absDir, r.file_path);
+    return {
+      file_path: r.file_path,
+      relPath,
+      rrf_score: r.rrf_score,
+      vec_rank: r.vec_rank,
+      fts_rank: r.fts_rank,
+      content: r.best_chunk ? r.best_chunk.content : '',
+      title: meta?.title || meta?.filename || relPath,
+      tags: meta?.tags || '[]',
+      para_area: meta?.para_area || null,
+    };
+  });
+  
+  // 8. Display results
+  console.log('Results:\n');
+  for (let i = 0; i < enriched.length; i++) {
+    const r = enriched[i];
     const preview = r.content.slice(0, 150).replace(/\n/g, ' ').trim();
     
-    console.log(`${i + 1}. ${relPath}`);
-    console.log(`   Hybrid: ${r.hybridScore.toFixed(4)} (vector: ${r.vectorScore.toFixed(4)}, meta: +${r.metadataBoost.toFixed(2)})`);
-    console.log(`   ${preview}...`);
+    console.log(`${i + 1}. ${r.relPath}`);
+    console.log(`   RRF: ${r.rrf_score.toFixed(5)} (vec_rank: ${r.vec_rank}, fts_rank: ${r.fts_rank})`);
+    if (preview) console.log(`   ${preview}...`);
     console.log();
   }
   
   db.close();
-  return topK;
+  return enriched;
 }
 
 async function cmdQuery(question, dirPath) {

@@ -4,7 +4,7 @@
   "chat_model": "gemma:2b",
   "ollama_url": "http://localhost:11434",
   "chunk_size": 800,
-  "chunk_overlap": 0,
+  "chunk_overlap": 80,
   "top_k": 20,
   "db_dir": "~/.local-rag",
   "concurrency": 5,

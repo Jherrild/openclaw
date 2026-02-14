@@ -319,3 +319,16 @@ node skills/obsidian-scribe/append.js "<absolute-path>" "<content>"
 ```
 
 Never use `edit`, `create`, or raw `fs` operations on files under `/mnt/c/Users/Jherr/Documents/remote-personal/`.
+
+---
+
+## Communicating with Jesten via Magnus
+
+When the user steps away or is unavailable at the terminal, send messages through Magnus:
+
+```bash
+openclaw agent -m "Magnus, please tell Jesten: '<message>'" --agent main --deliver
+```
+
+The `--deliver` flag ensures Magnus actually sends it to Telegram (not just replies in the CLI).
+Use this to notify the user when: blocked and need input, finished a long task, or encountered a critical error.
