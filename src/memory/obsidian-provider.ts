@@ -336,11 +336,11 @@ export class ObsidianMemoryProvider implements MemorySearchManager {
         const chunks = chunkMarkdown(body, chunking.tokens, chunking.overlap);
 
         for (const chunk of chunks) {
-          const chunkId = `${crypto
+          const chunkId = crypto
             .createHash("md5")
             .update(entry.path + ":" + chunk.startLine)
             .digest("hex")
-            .slice(0, 12)}`;
+            .slice(0, 12);
           const enrichedText = prefix + chunk.text;
 
           // Check embedding cache

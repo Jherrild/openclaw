@@ -1,6 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
 import * as crypto from "node:crypto";
-import * as fsSync from "node:fs";
 /**
  * obsidian-sync.ts — Vault file sync for the Obsidian memory provider
  *
@@ -146,7 +145,7 @@ function detectPara(relativePath: string): { category: string | null; area: stri
  */
 async function walkVault(
   dir: string,
-  vaultRoot: string,
+  _vaultRoot: string,
   excludeFolders: Set<string>,
 ): Promise<string[]> {
   const files: string[] = [];
