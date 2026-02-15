@@ -1,9 +1,27 @@
 # PRD: Native Obsidian Memory Provider for OpenClaw
 
-> **Status:** Draft — 2026-02-14
+> **Status:** Phase 1 Complete — 2026-02-15 (Issue #6: factory wiring done on `feat/obsidian-memory-wiring`)
 > **Author:** Jesten Herrild (jherrild), with analysis by Copilot
 > **Fork:** `~/openclaw-fork/` (Jherrild/openclaw)
 > **Upstream issues:** [#8851](https://github.com/openclaw/openclaw/issues/8851) (EMFILE watcher)
+
+### Implementation Status (Issue #6)
+
+All core wiring is complete. The 4 provider modules (`obsidian-provider.ts`, `obsidian-schema.ts`, `obsidian-search.ts`, `obsidian-sync.ts`) were built in a prior session. Issue #6 wired them into the OpenClaw memory factory:
+
+| Stage                | Description                                                                                                        | Status  | Key Files                                   |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------ | ------- | ------------------------------------------- |
+| 1. Config types      | `"obsidian"` added to `MemoryBackend`, `MemoryObsidianConfig` type                                                 | ✅ Done | `types.memory.ts`                           |
+| 2. Config resolution | `resolveObsidianBackend()` with defaults for vaultPath, dbPath, excludeFolders, chunking, search                   | ✅ Done | `backend-config.ts`                         |
+| 3. Factory wiring    | `getObsidianManager()` routes to `ObsidianMemoryProvider`, wrapped in `FallbackMemoryManager`                      | ✅ Done | `search-manager.ts`                         |
+| 4. Lifecycle hooks   | `"memory"` added to `InternalHookEventType`, `triggerInternalHook("memory", "sync-complete")` fires after indexing | ✅ Done | `obsidian-provider.ts`, `internal-hooks.ts` |
+
+**Tests:**
+
+- `backend-config.test.ts` — obsidian resolution with defaults
+- `search-manager.test.ts` — factory returns ObsidianMemoryProvider, fallback to builtin on error
+- `obsidian-search.test.ts` — RRF fusion, vector/keyword dedup
+- `obsidian-sync.test.ts` — chunk overlap, line tracking
 
 ---
 
@@ -223,42 +241,51 @@ Another clear win. When a user asks "what's in my Broadcom note?", exact filenam
 
 ## 5. Implementation Plan
 
-### Phase 1: Obsidian Memory Provider (Core)
+### Phase 1: Obsidian Memory Provider (Core) — ✅ COMPLETE
 
-**Files to create/modify in `~/openclaw-fork/src/memory/`:**
+**Files created/modified in `~/openclaw-fork/src/memory/`:**
 
-1. **`obsidian-provider.ts`** (NEW) — ObsidianMemoryProvider class
-   - Implements the same interface as MemoryIndexManager
+1. **`obsidian-provider.ts`** ✅ — ObsidianMemoryProvider class
+   - Implements `MemorySearchManager` interface
    - Vault path discovery and validation
-   - .obsidianignore / .gitignore respect
-   - PARA-aware file metadata extraction (from obsidian-scribe's logic)
+   - Background indexing (FTS5 instant, vectors async)
+   - `triggerInternalHook("memory", "sync-complete")` fires after indexing with stats
 
-2. **`obsidian-schema.ts`** (NEW) — Extended SQLite schema
-   - Rich FTS5 table with per-field weighting (from local-rag)
-   - Embedding cache table (from OpenClaw native)
-   - File metadata table with PARA fields
+2. **`obsidian-schema.ts`** ✅ — Extended SQLite schema
+   - Rich FTS5 table with per-field weighting (filename:10, title:8, tags:5, content:1)
+   - Embedding cache table (reusable by content hash)
+   - File metadata table with PARA fields (para_category, para_area)
+   - Graceful degradation if sqlite-vec unavailable
 
-3. **`obsidian-sync.ts`** (NEW) — Vault sync logic
-   - Incremental indexing via mtime + hash (best of both)
+3. **`obsidian-sync.ts`** ✅ — Vault sync logic
+   - Incremental indexing via mtime + hash
    - Exclude `.obsidian/`, `.trash/`, configurable folders
    - Frontmatter parsing for tags, aliases, PARA category
+   - Paragraph-aware chunking with configurable overlap
 
-4. **`obsidian-search.ts`** (NEW) — Hybrid search with RRF
-   - Reciprocal Rank Fusion (from local-rag)
-   - Per-field FTS5 weighting (from local-rag)
-   - Entity shortcut (from local-rag)
-   - Min-score threshold + candidate multiplier (from OpenClaw)
+4. **`obsidian-search.ts`** ✅ — Hybrid search with RRF
+   - Reciprocal Rank Fusion (k=60)
+   - Per-field FTS5 weighting
+   - Entity shortcut (exact filename/alias match)
+   - FTS5-only fallback during background embedding
 
-5. **`obsidian-flush.ts`** (NEW) — Memory flush to vault
-   - Calls obsidian-scribe write/append logic
-   - Proper frontmatter generation
-   - PARA filing (configurable target folder)
+5. **`obsidian-flush.ts`** — NOT YET IMPLEMENTED
+   - Memory flush to vault via obsidian-scribe integration
+   - Proper frontmatter generation, PARA filing
+   - _Deferred: not required for read-only search provider (issue #6 scope)_
 
-6. **`src/agents/memory-search.ts`** (MODIFY) — Add `"obsidian"` as a provider option
-   - New config type: `ObsidianMemoryConfig`
-   - Resolution logic for obsidian-specific settings
+6. **Config & factory wiring** ✅
+   - `MemoryBackend = "builtin" | "qmd" | "obsidian"` in `types.memory.ts`
+   - `MemoryObsidianConfig` type with vaultPath, dbPath, excludeFolders, chunking, search
+   - `resolveObsidianBackend()` in `backend-config.ts` with defaults
+   - `getObsidianManager()` in `search-manager.ts` with `FallbackMemoryManager` wrapping
+   - `"memory"` added to `InternalHookEventType` in `internal-hooks.ts`
 
-### Phase 2: Skills Improvements
+---
+
+### Future Work (Separate Issues)
+
+#### Skills Improvements
 
 **`skills/obsidian-scribe`:**
 
@@ -272,7 +299,7 @@ Another clear win. When a user asks "what's in my Broadcom note?", exact filenam
 - The Obsidian provider can import these directly or port them to TypeScript
 - Consider deprecating local-rag's standalone index in favor of the native provider's index
 
-### Phase 3: Watcher Fix (Upstream PR)
+#### Watcher Fix (Upstream PR)
 
 **`src/agents/skills/refresh.ts`:**
 
@@ -313,7 +340,9 @@ Our `local-rag` uses Ollama + `nomic-embed-text` (768d) — this requires a sepa
 
 ---
 
-## 8. Dynamic Context Injection (Replacing Static MEMORY.md)
+## 8. Dynamic Context Injection (Future Work — Separate Issue)
+
+> **Scope note:** This section describes a future enhancement that modifies the agent turn pipeline. It is NOT part of issue #6 (factory wiring). File as a separate issue when ready to implement.
 
 ### 8.1 The Current Problem
 
@@ -370,6 +399,7 @@ Instead of removing MEMORY.md entirely, redefine its role:
 
 - **Before:** Dump of everything the agent might need to know (~3000+ tokens, growing)
 - **After:** Small, curated "agent identity card" (~200-500 tokens, stable):
+
   ```markdown
   # Core Memory
 
@@ -472,41 +502,42 @@ For dynamic injection to work well, the search quality must be high. Current loc
 
 ---
 
-## 9. Indexing Lifecycle & Agent Awareness
+## 9. Indexing Lifecycle & Agent Awareness — ✅ IMPLEMENTED
 
 ### 9.1 Background Indexing with Fallback
 
-The Obsidian provider uses a progressive indexing strategy:
+The Obsidian provider uses a progressive indexing strategy. This is now implemented in `obsidian-provider.ts`:
 
 ```
 Gateway starts / provider configured
   → Phase 1: File scan + FTS5 indexing (instant, ~2s for 725 files)
     → Keyword search available immediately
-    → Agent informed: "Obsidian vault connected, keyword search ready"
 
   → Phase 2: Background embedding (async, ~36s for 725 chunks)
     → Provider state: indexing=true
-    → search() returns: FTS5 keyword results + built-in memory results
-    → Progress tracked: "Embedding: 150/725 files..."
+    → search() returns: FTS5 keyword results only (graceful degradation)
 
   → Phase 3: Embedding complete
-    → triggerInternalHook("memory", "index-complete", sessionKey, {
-        provider: "obsidian", files: 725, chunks: 730, durationMs: 36000
+    → triggerInternalHook("memory", "sync-complete", sessionKey, {
+        provider: "obsidian", vaultPath, files, modified, deleted, durationMs
       })
     → Provider state: indexing=false
     → search() returns: full hybrid (RRF vector + FTS5)
-    → Agent informed: "🧠 Obsidian memory fully indexed (725 files)"
 ```
 
-### 9.2 Agent Awareness
+**Fallback:** If `ObsidianMemoryProvider` fails to initialize (missing vault, sqlite error, etc.), `FallbackMemoryManager` in `search-manager.ts` transparently falls back to the builtin `MemoryIndexManager`.
 
-The agent knows its memory state via:
+### 9.2 Agent Awareness (Future Work)
+
+> **Not yet implemented.** These are enhancement ideas for after the core provider ships.
+
+The agent could know its memory state via:
 
 1. **System prompt annotation:** `<memory_status provider="obsidian" state="indexing" progress="150/725" />`
-2. **Hook event on completion:** Fires `memory:index-complete` → hook can push a message to the agent's session
+2. **Hook event on completion:** Fires `memory:sync-complete` → hook can push a message to the agent's session _(hook fires; delivery hook not yet written)_
 3. **Interrupt-service integration:** POST to `localhost:7600` with the completion event, enabling proactive notification to the user
 
-### 9.3 Explicit Index Command
+### 9.3 Explicit Index Command (Future Work)
 
 For first-time setup or manual re-index:
 
