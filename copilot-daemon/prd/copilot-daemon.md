@@ -181,7 +181,11 @@ Your task:
 7. If all stages complete:
    - Comment a completion summary
    - Remove copilot:approved, add copilot:done
-8. Notify Magnus: openclaw agent -m "Copilot completed issue #{{number}}: {{title}}" --agent main --deliver
+8. If all stages complete:
+   - Comment a completion summary
+   - Remove copilot:approved, add copilot:done
+9. If a notification command is configured, announce completion
+```
 ```
 
 ---
@@ -192,7 +196,8 @@ Your task:
 
 ```
 copilot-daemon/
-  SKILL.md              # Skill metadata (for discoverability)
+  prd/
+    copilot-daemon.md   # This file
   daemon.sh             # Main daemon loop (systemd target)
   run-once.sh           # Process single issue and exit
   init.sh               # Create labels, validate auth
@@ -200,14 +205,12 @@ copilot-daemon/
     issue-picker.sh     # Query GitHub for next actionable issue
     prompt-builder.sh   # Build tier-specific prompt from issue + stage
     label-manager.sh    # Add/remove labels, detect human comments
-    notifier.sh         # Magnus notification (if available)
+    notifier.sh         # Optional notification hook (configurable command)
   prompts/
     draft-prd.md        # Template for stage 1
     review-prd.md       # Template for stage 2
     revision.md         # Template for human feedback loop
     implement.md        # Template for stage 4
-  prd/
-    copilot-daemon.md   # This file
 ```
 
 ### 4.2 Daemon Loop
@@ -304,12 +307,13 @@ When the daemon picks up work, it notifies via two channels:
    🤖 Copilot picking up this issue (stage: draft-prd). Started at 2026-02-14T23:30:00Z
    ```
 
-2. **Magnus relay** — if available (OpenClaw-specific)
+2. **Custom notification hook** — if configured (OpenClaw-specific example)
    ```bash
-   openclaw agent -m "Copilot picked up issue #42: Fix pagination bug (stage: draft-prd)" --agent main --deliver 2>/dev/null || true
+   # Set via: copilot-daemon start --notify-cmd "openclaw agent -m '{{message}}' --agent main --deliver"
+   # Or via config file. If not set, GitHub issue comments are the only notification channel.
    ```
 
-The `|| true` ensures the daemon doesn't fail if OpenClaw isn't available (portability).
+The `--notify-cmd` is optional. Without it, the daemon communicates solely through GitHub issue comments — fully portable.
 
 ---
 
@@ -465,8 +469,8 @@ If a Copilot session was interrupted (crash, timeout), the daemon could `--resum
 
 ### Stage 2: Daemon + Notifications
 - [ ] `daemon.sh` — polling loop with configurable interval
-- [ ] systemd unit file (or task-orchestrator integration)
-- [ ] Magnus notification on pickup and completion
+- [ ] systemd unit file
+- [ ] Notification hook (`--notify-cmd` for custom notification, e.g., OpenClaw relay)
 - [ ] GitHub issue comment on pickup
 - [ ] Test: daemon picks up and processes an issue automatically
 
@@ -480,7 +484,7 @@ If a Copilot session was interrupted (crash, timeout), the daemon could `--resum
 - [ ] `--repo owner/repo` flag for cross-repo use
 - [ ] Error handling (gh auth failures, copilot crashes, network issues)
 - [ ] Status command (show current state, pending issues, last run)
-- [ ] Update copilot-instructions.md with daemon protocol
+- [ ] Update repo-specific instruction files if applicable (e.g., copilot-instructions.md)
 
 ---
 
@@ -507,8 +511,8 @@ If a Copilot session was interrupted (crash, timeout), the daemon could `--resum
 - `copilot` CLI (authenticated)
 - `copilot-lock.sh` (from copilot-delegate skill)
 - `jq` (for JSON parsing)
-- Optional: `openclaw` CLI (for Magnus notifications)
-- Optional: `systemd` (for daemon mode) or `task-orchestrator`
+- Optional: Custom notification command (e.g., `openclaw agent --deliver` for OpenClaw setups)
+- Optional: `systemd` (for daemon mode)
 
 ---
 
@@ -516,7 +520,7 @@ If a Copilot session was interrupted (crash, timeout), the daemon could `--resum
 
 | Resource | Location |
 |----------|----------|
-| copilot-delegate skill | `skills/copilot-delegate/` |
-| copilot-lock.sh | `skills/copilot-delegate/copilot-lock.sh` |
-| interrupt-service | `skills/interrupt-service/` |
-| task-orchestrator | `skills/task-orchestrator/` |
+| copilot-delegate skill | `skills/copilot-delegate/` (OpenClaw-specific) or any copilot wrapper script |
+| copilot-lock.sh | `skills/copilot-delegate/copilot-lock.sh` (or configurable path) |
+| interrupt-service | `skills/interrupt-service/` (OpenClaw-specific, optional) |
+| task-orchestrator | `skills/task-orchestrator/` (OpenClaw-specific, optional) |
