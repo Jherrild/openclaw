@@ -74,32 +74,26 @@ Memory flush → obsidian-scribe integration
 
 ### Config Design
 
+The obsidian backend is configured under the top-level `memory` key (not `memorySearch`). The `memorySearch` config separately controls embedding provider, limits, and per-agent search settings.
+
 ```json
 {
-  "agents": {
-    "defaults": {
-      "memorySearch": {
-        "enabled": true,
-        "provider": "obsidian",
-        "obsidian": {
-          "vaultPath": "/path/to/obsidian/vault",
-          "preserveLocal": true,
-          "targetFolder": "2-Areas/AgentName",
-          "excludeFolders": [".obsidian", ".trash", "4-Archive"],
-          "flushTags": ["agent/memory", "auto-generated"],
-          "embedding": {
-            "provider": "ollama",
-            "model": "nomic-embed-text",
-            "dimensions": 768
-          }
-        }
-      }
+  "memory": {
+    "backend": "obsidian",
+    "obsidian": {
+      "vaultPath": "/path/to/obsidian/vault",
+      "preserveLocal": true,
+      "excludeFolders": [".obsidian", ".trash", "4-Archive"],
+      "chunking": { "tokens": 400, "overlap": 80 },
+      "search": { "maxResults": 8, "minScore": 0, "vectorWeight": 0.7, "textWeight": 0.3 }
     }
   }
 }
 ```
 
-The `embedding` sub-key allows the Obsidian provider to use a different embedding model than the default memory system (e.g., a local model for privacy, vs. OpenAI for quality).
+All fields under `obsidian` are optional — defaults are shown above. The embedding provider is resolved from `agents.defaults.memorySearch.provider` (e.g., `"local"`, `"openai"`, `"auto"`); if set to `"obsidian"` there, it falls back to `"auto"`.
+
+> **Note:** `memorySearch.obsidian` also exists in `types.tools.ts` with fields like `targetFolder` and `flushTags` intended for future memory flush support (`obsidian-flush.ts`). These are not yet wired into the backend. The implemented config lives in `types.memory.ts` as `MemoryObsidianConfig`.
 
 ---
 
@@ -556,6 +550,7 @@ openclaw memory index --provider obsidian
 - [ ] Test the custom `obsidian-memory` hook (deployed to `~/.openclaw/hooks/`) on next `/new` command
 - [ ] Investigate the EMFILE watcher issue in the forked source — reproduce and fix
 - [ ] Review OpenClaw's plugin system (`openclaw.extensions` in package.json) as an alternative to forking — could the Obsidian provider be an installable plugin?
+- [ ] Clean up stale `memorySearch.obsidian` type in `types.tools.ts` — either wire it into config resolution or remove it. The implemented config lives in `types.memory.ts` as `MemoryObsidianConfig`.
 
 ---
 
