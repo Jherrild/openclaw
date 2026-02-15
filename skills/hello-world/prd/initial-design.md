@@ -92,8 +92,8 @@ A: Shell. The codebase convention is Node.js for real skills, but this is a test
 
 ## Still TODO
 
-- [ ] Implement Stage 1 (SKILL.md)
-- [ ] Implement Stage 2 (hello.sh)
-- [ ] Implement Stage 3 (test.sh)
+- [x] Implement Stage 1 (SKILL.md)
+- [x] Implement Stage 2 (hello.sh)
+- [x] Implement Stage 3 (test.sh)
 - [ ] Validate pipeline end-to-end
 - [ ] Decide whether to keep or archive post-validation
