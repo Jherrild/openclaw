@@ -1,7 +1,7 @@
 # PRD: Copilot Daemon — Automated GitHub Issue → Copilot Pipeline
 
 > **Status:** Draft — 2026-02-14
-> **Skill:** `skills/copilot-daemon/`
+> **Location:** `copilot-daemon/`
 > **Related:** `skills/copilot-delegate/` (execution layer)
 
 ---
@@ -326,7 +326,59 @@ Detection: compare comment author against the authenticated `gh` user. If differ
 
 ---
 
-## 8. Implementation Safety (Shared Worktree)
+## 8. Work Modes
+
+The daemon supports two execution modes, selected at start:
+
+```bash
+copilot-daemon start --workmode worktree    # Isolated branch per issue (work/clean repos)
+copilot-daemon start --workmode in-place    # Atomic writes in shared tree (OpenClaw/Magnus)
+```
+
+### 8.1 Worktree Mode (`--workmode worktree`)
+
+**Best for:** Work repos, clean repos, any environment without untracked runtime state.
+
+Each issue gets an isolated git worktree:
+
+```
+issue #42 picked up
+  → git worktree add .worktrees/issue-42 -b copilot/issue-42
+  → Copilot runs in .worktrees/issue-42/ (clean checkout, own branch)
+  → On completion: PR created from copilot/issue-42 → main
+  → Worktree cleaned up after merge
+```
+
+**Advantages:**
+- Zero risk of mid-edit collisions — completely isolated working directory
+- Each issue gets its own branch + PR (clean git history)
+- Multiple issues can be *prepared* in parallel (only execution is serialized by the lock)
+
+**Requirements:**
+- No untracked runtime state (tokens, credentials, node_modules) needed by the code under modification
+- `npm install` or equivalent must work in the worktree (dependencies are committed or installable)
+
+### 8.2 In-Place Mode (`--workmode in-place`)
+
+**Best for:** OpenClaw workspace where Magnus shares the tree and skills depend on untracked state files (OAuth tokens, sync mappings, node_modules, logs).
+
+All work happens in the existing working directory:
+
+```
+issue #42 picked up
+  → Work on current branch (or create feature branch + merge back)
+  → New-file-first pattern: write new modules, swap entry points atomically
+  → Commits directly to the working branch
+```
+
+**Advantages:**
+- All runtime state available (tokens, node_modules, config files)
+- No worktree setup/teardown overhead
+- Works even when skills have complex untracked dependency chains
+
+**Safety:** See §8.3 below.
+
+### 8.3 In-Place Safety (Shared Worktree)
 
 Magnus and Copilot share the same working tree. The mutex lock prevents concurrent Copilot sessions but does NOT prevent Magnus from using skills that Copilot is modifying. This is manageable because:
 
