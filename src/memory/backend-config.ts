@@ -17,6 +17,21 @@ export type ResolvedMemoryBackendConfig = {
   backend: MemoryBackend;
   citations: MemoryCitationsMode;
   qmd?: ResolvedQmdConfig;
+  obsidian?: ResolvedObsidianConfig;
+};
+
+export type ResolvedObsidianConfig = {
+  vaultPath: string;
+  dbPath: string;
+  excludeFolders: string[];
+  preserveLocal: boolean;
+  chunking: { tokens: number; overlap: number };
+  search: {
+    maxResults: number;
+    minScore: number;
+    vectorWeight: number;
+    textWeight: number;
+  };
 };
 
 export type ResolvedQmdCollection = {
@@ -63,6 +78,16 @@ export type ResolvedQmdConfig = {
 
 const DEFAULT_BACKEND: MemoryBackend = "builtin";
 const DEFAULT_CITATIONS: MemoryCitationsMode = "auto";
+
+const DEFAULT_OBSIDIAN_EXCLUDE_FOLDERS = [".obsidian", ".trash", "4-Archive"];
+const DEFAULT_OBSIDIAN_CHUNKING = { tokens: 400, overlap: 80 };
+const DEFAULT_OBSIDIAN_SEARCH = {
+  maxResults: 8,
+  minScore: 0,
+  vectorWeight: 0.7,
+  textWeight: 0.3,
+};
+
 const DEFAULT_QMD_INTERVAL = "5m";
 const DEFAULT_QMD_DEBOUNCE_MS = 15_000;
 const DEFAULT_QMD_TIMEOUT_MS = 4_000;
@@ -259,6 +284,11 @@ export function resolveMemoryBackendConfig(params: {
 }): ResolvedMemoryBackendConfig {
   const backend = params.cfg.memory?.backend ?? DEFAULT_BACKEND;
   const citations = params.cfg.memory?.citations ?? DEFAULT_CITATIONS;
+
+  if (backend === "obsidian") {
+    return resolveObsidianBackend(params, citations);
+  }
+
   if (backend !== "qmd") {
     return { backend: "builtin", citations };
   }
@@ -309,4 +339,62 @@ export function resolveMemoryBackendConfig(params: {
     citations,
     qmd: resolved,
   };
+}
+
+function resolveObsidianBackend(
+  params: { cfg: OpenClawConfig; agentId: string },
+  citations: MemoryCitationsMode,
+): ResolvedMemoryBackendConfig {
+  const workspaceDir = resolveAgentWorkspaceDir(params.cfg, params.agentId);
+  const obsCfg = params.cfg.memory?.obsidian;
+
+  const vaultPath = obsCfg?.vaultPath ? resolvePath(obsCfg.vaultPath, workspaceDir) : workspaceDir;
+
+  const dbPath = obsCfg?.dbPath
+    ? resolvePath(obsCfg.dbPath, workspaceDir)
+    : path.join(vaultPath, ".obsidian", "openclaw-memory.sqlite");
+
+  const excludeFolders = obsCfg?.excludeFolders ?? DEFAULT_OBSIDIAN_EXCLUDE_FOLDERS;
+
+  const chunking = {
+    tokens: clampPositiveInt(obsCfg?.chunking?.tokens, DEFAULT_OBSIDIAN_CHUNKING.tokens),
+    overlap: clampPositiveInt(obsCfg?.chunking?.overlap, DEFAULT_OBSIDIAN_CHUNKING.overlap),
+  };
+
+  const search = {
+    maxResults: clampPositiveInt(obsCfg?.search?.maxResults, DEFAULT_OBSIDIAN_SEARCH.maxResults),
+    minScore: clampPositiveNumber(obsCfg?.search?.minScore, DEFAULT_OBSIDIAN_SEARCH.minScore),
+    vectorWeight: clampPositiveNumber(
+      obsCfg?.search?.vectorWeight,
+      DEFAULT_OBSIDIAN_SEARCH.vectorWeight,
+    ),
+    textWeight: clampPositiveNumber(obsCfg?.search?.textWeight, DEFAULT_OBSIDIAN_SEARCH.textWeight),
+  };
+
+  return {
+    backend: "obsidian",
+    citations,
+    obsidian: {
+      vaultPath,
+      dbPath,
+      excludeFolders,
+      preserveLocal: obsCfg?.preserveLocal !== false,
+      chunking,
+      search,
+    },
+  };
+}
+
+function clampPositiveInt(raw: number | undefined, fallback: number): number {
+  if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) {
+    return Math.floor(raw);
+  }
+  return fallback;
+}
+
+function clampPositiveNumber(raw: number | undefined, fallback: number): number {
+  if (typeof raw === "number" && Number.isFinite(raw) && raw >= 0) {
+    return raw;
+  }
+  return fallback;
 }

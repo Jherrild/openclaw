@@ -84,11 +84,38 @@ const MemoryQmdSchema = z
   })
   .strict();
 
+const MemoryObsidianSchema = z
+  .object({
+    vaultPath: z.string().optional(),
+    dbPath: z.string().optional(),
+    excludeFolders: z.array(z.string()).optional(),
+    preserveLocal: z.boolean().optional(),
+    chunking: z
+      .object({
+        tokens: z.number().optional(),
+        overlap: z.number().optional(),
+      })
+      .strict()
+      .optional(),
+    search: z
+      .object({
+        maxResults: z.number().optional(),
+        minScore: z.number().optional(),
+        vectorWeight: z.number().optional(),
+        textWeight: z.number().optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict()
+  .optional();
+
 const MemorySchema = z
   .object({
-    backend: z.union([z.literal("builtin"), z.literal("qmd")]).optional(),
+    backend: z.union([z.literal("builtin"), z.literal("qmd"), z.literal("obsidian")]).optional(),
     citations: z.union([z.literal("auto"), z.literal("on"), z.literal("off")]).optional(),
     qmd: MemoryQmdSchema.optional(),
+    obsidian: MemoryObsidianSchema,
   })
   .strict()
   .optional();

@@ -1,6 +1,6 @@
 import type { SessionSendPolicyConfig } from "./types.base.js";
 
-export type MemoryBackend = "builtin" | "qmd";
+export type MemoryBackend = "builtin" | "qmd" | "obsidian";
 export type MemoryCitationsMode = "auto" | "on" | "off";
 export type MemoryQmdSearchMode = "query" | "search" | "vsearch";
 
@@ -8,6 +8,24 @@ export type MemoryConfig = {
   backend?: MemoryBackend;
   citations?: MemoryCitationsMode;
   qmd?: MemoryQmdConfig;
+  obsidian?: MemoryObsidianConfig;
+};
+
+export type MemoryObsidianConfig = {
+  vaultPath?: string;
+  dbPath?: string;
+  excludeFolders?: string[];
+  preserveLocal?: boolean;
+  chunking?: {
+    tokens?: number;
+    overlap?: number;
+  };
+  search?: {
+    maxResults?: number;
+    minScore?: number;
+    vectorWeight?: number;
+    textWeight?: number;
+  };
 };
 
 export type MemoryQmdConfig = {

@@ -244,4 +244,56 @@ describe("hooks", () => {
       expect(results).toHaveLength(2);
     });
   });
+
+  describe("memory event type", () => {
+    it("fires memory:sync-complete event with correct payload", async () => {
+      const received: InternalHookEvent[] = [];
+      registerInternalHook("memory:sync-complete", (event) => {
+        received.push(event);
+      });
+
+      const event = createInternalHookEvent("memory", "sync-complete", "", {
+        provider: "obsidian",
+        vaultPath: "/tmp/vault",
+        files: 42,
+        newOrModified: 5,
+        deleted: 1,
+        durationMs: 1234,
+        reason: "initialize",
+      });
+      await triggerInternalHook(event);
+
+      expect(received).toHaveLength(1);
+      expect(received[0].type).toBe("memory");
+      expect(received[0].action).toBe("sync-complete");
+      expect(received[0].context).toMatchObject({
+        provider: "obsidian",
+        files: 42,
+        newOrModified: 5,
+        deleted: 1,
+        durationMs: 1234,
+        reason: "initialize",
+      });
+    });
+
+    it("fires both general memory and specific memory:sync-complete handlers", async () => {
+      const generalResults: string[] = [];
+      const specificResults: string[] = [];
+
+      registerInternalHook("memory", () => {
+        generalResults.push("general");
+      });
+      registerInternalHook("memory:sync-complete", () => {
+        specificResults.push("specific");
+      });
+
+      const event = createInternalHookEvent("memory", "sync-complete", "", {
+        provider: "obsidian",
+      });
+      await triggerInternalHook(event);
+
+      expect(generalResults).toHaveLength(1);
+      expect(specificResults).toHaveLength(1);
+    });
+  });
 });

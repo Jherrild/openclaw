@@ -42,6 +42,10 @@ export async function noteMemorySearchHealth(cfg: OpenClawConfig): Promise<void>
       );
       return;
     }
+    // Obsidian provider uses its own embedding config — skip API key check
+    if (resolved.provider === "obsidian") {
+      return;
+    }
     // Remote provider — check for API key
     if (hasRemoteApiKey || (await hasApiKeyForProvider(resolved.provider, cfg, agentDir))) {
       return;

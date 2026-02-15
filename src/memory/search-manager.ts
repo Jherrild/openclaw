@@ -1,15 +1,18 @@
 import type { OpenClawConfig } from "../config/config.js";
-import type { ResolvedQmdConfig } from "./backend-config.js";
+import type { ResolvedObsidianConfig, ResolvedQmdConfig } from "./backend-config.js";
 import type {
   MemoryEmbeddingProbeResult,
   MemorySearchManager,
   MemorySyncProgressUpdate,
 } from "./types.js";
+import { resolveAgentDir } from "../agents/agent-scope.js";
+import { resolveMemorySearchConfig } from "../agents/memory-search.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { resolveMemoryBackendConfig } from "./backend-config.js";
 
 const log = createSubsystemLogger("memory");
 const QMD_MANAGER_CACHE = new Map<string, MemorySearchManager>();
+const OBSIDIAN_MANAGER_CACHE = new Map<string, MemorySearchManager>();
 
 export type MemorySearchManagerResult = {
   manager: MemorySearchManager | null;
@@ -21,6 +24,11 @@ export async function getMemorySearchManager(params: {
   agentId: string;
 }): Promise<MemorySearchManagerResult> {
   const resolved = resolveMemoryBackendConfig(params);
+
+  if (resolved.backend === "obsidian" && resolved.obsidian) {
+    return getObsidianManager(params, resolved.obsidian);
+  }
+
   if (resolved.backend === "qmd" && resolved.qmd) {
     const cacheKey = buildQmdCacheKey(params.agentId, resolved.qmd);
     const cached = QMD_MANAGER_CACHE.get(cacheKey);
@@ -52,6 +60,77 @@ export async function getMemorySearchManager(params: {
       const message = err instanceof Error ? err.message : String(err);
       log.warn(`qmd memory unavailable; falling back to builtin: ${message}`);
     }
+  }
+
+  try {
+    const { MemoryIndexManager } = await import("./manager.js");
+    const manager = await MemoryIndexManager.get(params);
+    return { manager };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { manager: null, error: message };
+  }
+}
+
+async function getObsidianManager(
+  params: { cfg: OpenClawConfig; agentId: string },
+  obsidianConfig: ResolvedObsidianConfig,
+): Promise<MemorySearchManagerResult> {
+  const cacheKey = buildObsidianCacheKey(params.agentId, obsidianConfig);
+  const cached = OBSIDIAN_MANAGER_CACHE.get(cacheKey);
+  if (cached) {
+    return { manager: cached };
+  }
+
+  try {
+    // Resolve embedding provider from the agent's memorySearch config
+    const searchConfig = resolveMemorySearchConfig(params.cfg, params.agentId);
+    const embeddingProvider =
+      searchConfig?.provider === "obsidian" ? "auto" : (searchConfig?.provider ?? "auto");
+    const { createEmbeddingProvider } = await import("./embeddings.js");
+    const providerResult = await createEmbeddingProvider({
+      config: params.cfg,
+      agentDir: resolveAgentDir(params.cfg, params.agentId),
+      provider: embeddingProvider,
+      remote: searchConfig?.remote,
+      model: searchConfig?.model ?? "text-embedding-3-small",
+      fallback: searchConfig?.fallback ?? "none",
+      local: searchConfig?.local,
+    });
+
+    const { ObsidianMemoryProvider } = await import("./obsidian-provider.js");
+    const primary = new ObsidianMemoryProvider({
+      config: {
+        vaultPath: obsidianConfig.vaultPath,
+        dbPath: obsidianConfig.dbPath,
+        excludeFolders: obsidianConfig.excludeFolders,
+        preserveLocal: obsidianConfig.preserveLocal,
+        chunking: obsidianConfig.chunking,
+        search: {
+          maxResults: obsidianConfig.search.maxResults,
+          minScore: obsidianConfig.search.minScore,
+        },
+      },
+      provider: providerResult.provider,
+    });
+
+    await primary.initialize();
+
+    const wrapper = new FallbackMemoryManager(
+      {
+        primary,
+        fallbackFactory: async () => {
+          const { MemoryIndexManager } = await import("./manager.js");
+          return await MemoryIndexManager.get(params);
+        },
+      },
+      () => OBSIDIAN_MANAGER_CACHE.delete(cacheKey),
+    );
+    OBSIDIAN_MANAGER_CACHE.set(cacheKey, wrapper);
+    return { manager: wrapper };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log.warn(`obsidian memory unavailable; falling back to builtin: ${message}`);
   }
 
   try {
@@ -203,6 +282,10 @@ class FallbackMemoryManager implements MemorySearchManager {
 
 function buildQmdCacheKey(agentId: string, config: ResolvedQmdConfig): string {
   return `${agentId}:${stableSerialize(config)}`;
+}
+
+function buildObsidianCacheKey(agentId: string, config: ResolvedObsidianConfig): string {
+  return `obsidian:${agentId}:${stableSerialize(config)}`;
 }
 
 function stableSerialize(value: unknown): string {

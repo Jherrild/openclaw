@@ -108,4 +108,68 @@ describe("resolveMemoryBackendConfig", () => {
     const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
     expect(resolved.qmd?.searchMode).toBe("vsearch");
   });
+
+  it("resolves obsidian backend with defaults", () => {
+    const cfg = {
+      agents: { defaults: { workspace: "/tmp/memory-test" } },
+      memory: {
+        backend: "obsidian",
+        obsidian: {
+          vaultPath: "/home/user/vault",
+        },
+      },
+    } as OpenClawConfig;
+    const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
+    expect(resolved.backend).toBe("obsidian");
+    expect(resolved.obsidian).toBeDefined();
+    expect(resolved.obsidian?.vaultPath).toBe("/home/user/vault");
+    expect(resolved.obsidian?.dbPath).toBe("/home/user/vault/.obsidian/openclaw-memory.sqlite");
+    expect(resolved.obsidian?.excludeFolders).toEqual([".obsidian", ".trash", "4-Archive"]);
+    expect(resolved.obsidian?.preserveLocal).toBe(true);
+    expect(resolved.obsidian?.chunking).toEqual({ tokens: 400, overlap: 80 });
+    expect(resolved.obsidian?.search.maxResults).toBe(8);
+    expect(resolved.obsidian?.search.minScore).toBe(0);
+    expect(resolved.obsidian?.search.vectorWeight).toBe(0.7);
+    expect(resolved.obsidian?.search.textWeight).toBe(0.3);
+    expect(resolved.qmd).toBeUndefined();
+  });
+
+  it("resolves obsidian backend with custom overrides", () => {
+    const cfg = {
+      agents: { defaults: { workspace: "/tmp/memory-test" } },
+      memory: {
+        backend: "obsidian",
+        obsidian: {
+          vaultPath: "/home/user/vault",
+          dbPath: "/tmp/custom.sqlite",
+          excludeFolders: [".obsidian"],
+          preserveLocal: false,
+          chunking: { tokens: 200, overlap: 40 },
+          search: { maxResults: 12, minScore: 0.5, vectorWeight: 0.8, textWeight: 0.2 },
+        },
+      },
+    } as OpenClawConfig;
+    const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
+    expect(resolved.obsidian?.dbPath).toBe("/tmp/custom.sqlite");
+    expect(resolved.obsidian?.excludeFolders).toEqual([".obsidian"]);
+    expect(resolved.obsidian?.preserveLocal).toBe(false);
+    expect(resolved.obsidian?.chunking).toEqual({ tokens: 200, overlap: 40 });
+    expect(resolved.obsidian?.search.maxResults).toBe(12);
+    expect(resolved.obsidian?.search.minScore).toBe(0.5);
+    expect(resolved.obsidian?.search.vectorWeight).toBe(0.8);
+    expect(resolved.obsidian?.search.textWeight).toBe(0.2);
+  });
+
+  it("falls back to workspace dir when no vaultPath specified", () => {
+    const cfg = {
+      agents: { defaults: { workspace: "/tmp/memory-test" } },
+      memory: {
+        backend: "obsidian",
+      },
+    } as OpenClawConfig;
+    const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
+    expect(resolved.backend).toBe("obsidian");
+    const workspaceDir = resolveAgentWorkspaceDir(cfg, "main");
+    expect(resolved.obsidian?.vaultPath).toBe(workspaceDir);
+  });
 });

@@ -22,6 +22,26 @@ const mockPrimary = {
   close: vi.fn(async () => {}),
 };
 
+const mockObsidianInstance = {
+  search: vi.fn(async () => []),
+  readFile: vi.fn(async () => ({ text: "", path: "note.md" })),
+  status: vi.fn(() => ({
+    backend: "obsidian" as const,
+    provider: "obsidian",
+    model: "test",
+    files: 0,
+    chunks: 0,
+    dirty: false,
+    workspaceDir: "/tmp/vault",
+    dbPath: "/tmp/vault/.obsidian/openclaw-memory.sqlite",
+  })),
+  sync: vi.fn(async () => {}),
+  probeEmbeddingAvailability: vi.fn(async () => ({ ok: true })),
+  probeVectorAvailability: vi.fn(async () => true),
+  close: vi.fn(async () => {}),
+  initialize: vi.fn(async () => {}),
+};
+
 const fallbackSearch = vi.fn(async () => [
   {
     path: "MEMORY.md",
@@ -65,6 +85,25 @@ vi.mock("./manager.js", () => ({
   },
 }));
 
+vi.mock("./obsidian-provider.js", () => ({
+  ObsidianMemoryProvider: class {
+    constructor() {
+      Object.assign(this, mockObsidianInstance);
+    }
+  },
+}));
+
+vi.mock("./embeddings.js", () => ({
+  createEmbeddingProvider: vi.fn(async () => ({
+    provider: {
+      id: "local",
+      model: "test-model",
+      embedQuery: vi.fn(async () => [0.1, 0.2]),
+      embedBatch: vi.fn(async () => [[0.1, 0.2]]),
+    },
+  })),
+}));
+
 import { QmdMemoryManager } from "./qmd-manager.js";
 import { getMemorySearchManager } from "./search-manager.js";
 
@@ -84,6 +123,14 @@ beforeEach(() => {
   fallbackManager.probeVectorAvailability.mockClear();
   fallbackManager.close.mockClear();
   QmdMemoryManager.create.mockClear();
+  mockObsidianInstance.search.mockClear();
+  mockObsidianInstance.readFile.mockClear();
+  mockObsidianInstance.status.mockClear();
+  mockObsidianInstance.sync.mockClear();
+  mockObsidianInstance.probeEmbeddingAvailability.mockClear();
+  mockObsidianInstance.probeVectorAvailability.mockClear();
+  mockObsidianInstance.close.mockClear();
+  mockObsidianInstance.initialize.mockClear();
 });
 
 describe("getMemorySearchManager caching", () => {
@@ -178,5 +225,76 @@ describe("getMemorySearchManager caching", () => {
     expect(results).toHaveLength(1);
     expect(results[0]?.path).toBe("MEMORY.md");
     expect(fallbackSearch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("getMemorySearchManager obsidian", () => {
+  it("returns ObsidianMemoryProvider when backend is obsidian", async () => {
+    const cfg = {
+      memory: {
+        backend: "obsidian",
+        obsidian: { vaultPath: "/tmp/vault" },
+      },
+      agents: {
+        defaults: {
+          workspace: "/tmp/workspace",
+          memorySearch: { enabled: true, provider: "obsidian" },
+        },
+        list: [{ id: "obs-agent", default: true, workspace: "/tmp/workspace" }],
+      },
+    } as const;
+
+    const result = await getMemorySearchManager({ cfg, agentId: "obs-agent" });
+    expect(result.manager).toBeTruthy();
+    expect(result.error).toBeUndefined();
+    // Verify the initialize mock was called (proving obsidian path was taken)
+    expect(mockObsidianInstance.initialize).toHaveBeenCalled();
+    // FallbackMemoryManager delegates status() to obsidian primary
+    const status = result.manager!.status();
+    expect(status.backend).toBe("obsidian");
+  });
+
+  it("falls back to builtin when obsidian initialization fails", async () => {
+    mockObsidianInstance.initialize.mockRejectedValueOnce(new Error("vault not found"));
+
+    const cfg = {
+      memory: {
+        backend: "obsidian",
+        obsidian: { vaultPath: "/tmp/bad-vault" },
+      },
+      agents: {
+        defaults: {
+          workspace: "/tmp/workspace",
+          memorySearch: { enabled: true, provider: "obsidian" },
+        },
+        list: [{ id: "obs-fail-agent", default: true, workspace: "/tmp/workspace" }],
+      },
+    } as const;
+
+    const result = await getMemorySearchManager({ cfg, agentId: "obs-fail-agent" });
+    expect(result.manager).toBeTruthy();
+    // Should get fallbackManager (builtin) since obsidian failed
+    const status = result.manager!.status();
+    expect(status.backend).toBe("builtin");
+  });
+
+  it("caches obsidian manager for repeated calls", async () => {
+    const cfg = {
+      memory: {
+        backend: "obsidian",
+        obsidian: { vaultPath: "/tmp/vault-cache" },
+      },
+      agents: {
+        defaults: {
+          workspace: "/tmp/workspace",
+          memorySearch: { enabled: true, provider: "obsidian" },
+        },
+        list: [{ id: "obs-cache-agent", default: true, workspace: "/tmp/workspace" }],
+      },
+    } as const;
+
+    const first = await getMemorySearchManager({ cfg, agentId: "obs-cache-agent" });
+    const second = await getMemorySearchManager({ cfg, agentId: "obs-cache-agent" });
+    expect(first.manager).toBe(second.manager);
   });
 });

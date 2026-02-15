@@ -19,6 +19,7 @@ import type {
   MemoryEmbeddingProbeResult,
   MemorySyncProgressUpdate,
 } from "./types.js";
+import { triggerInternalHook, createInternalHookEvent } from "../hooks/internal-hooks.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { ensureObsidianSchema } from "./obsidian-schema.js";
 import {
@@ -284,6 +285,17 @@ export class ObsidianMemoryProvider implements MemorySearchManager {
     if (syncResult.newOrModified === 0 && !params?.force) {
       this.indexing = { phase: "complete", total: syncResult.total, completed: syncResult.total };
       this.dirty = false;
+      void triggerInternalHook(
+        createInternalHookEvent("memory", "sync-complete", "", {
+          provider: "obsidian",
+          vaultPath: this.config.vaultPath,
+          files: syncResult.total,
+          newOrModified: 0,
+          deleted: syncResult.deleted,
+          durationMs: Date.now() - (this.indexing.startedAt || Date.now()),
+          reason,
+        }),
+      );
       return;
     }
 
@@ -304,6 +316,7 @@ export class ObsidianMemoryProvider implements MemorySearchManager {
     }
 
     // Phase 3: Complete
+    const durationMs = Date.now() - (this.indexing.startedAt || Date.now());
     this.indexing = {
       phase: "complete",
       total: syncResult.total,
@@ -311,7 +324,20 @@ export class ObsidianMemoryProvider implements MemorySearchManager {
     };
     this.dirty = false;
 
-    log.info(`Vault indexing complete (${Date.now() - (this.indexing.startedAt || Date.now())}ms)`);
+    log.info(`Vault indexing complete (${durationMs}ms)`);
+
+    // Fire lifecycle hook
+    void triggerInternalHook(
+      createInternalHookEvent("memory", "sync-complete", "", {
+        provider: "obsidian",
+        vaultPath: this.config.vaultPath,
+        files: syncResult.total,
+        newOrModified: syncResult.newOrModified,
+        deleted: syncResult.deleted,
+        durationMs,
+        reason,
+      }),
+    );
   }
 
   /**
@@ -457,7 +483,7 @@ export class ObsidianMemoryProvider implements MemorySearchManager {
     }
 
     return {
-      backend: "builtin",
+      backend: "obsidian",
       provider: "obsidian",
       model: this.provider.model,
       files,
