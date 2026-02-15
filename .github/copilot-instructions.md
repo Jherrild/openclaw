@@ -341,9 +341,10 @@ cat "/mnt/c/Users/Jherr/Documents/remote-personal/1-Projects/openclaw/Notes/Obsi
 **Key project files:**
 | Note | Content |
 |------|---------|
-| `1-Projects/openclaw/Notes/Obsidian Memory Provider.md` | Native Obsidian memory provider — architecture, decisions, requirements, implementation order |
+| `1-Projects/openclaw/Obsidian Memory Provider.md` | Native Obsidian memory provider — architecture, decisions, requirements, implementation order |
+| `1-Projects/openclaw/Copilot Daemon.md` | Automated GitHub issue → Copilot pipeline |
 
-**Convention:** When working on or discussing any OpenClaw skill or improvement, ensure a corresponding project note exists in `1-Projects/openclaw/Notes/` and is kept up to date. After significant work (new decisions, architecture changes, completed phases), append updates to the relevant note via `obsidian-scribe`. This is the user's durable record — PRDs in the workspace are working docs, but the Obsidian note is what survives across sessions and agents.
+**Convention:** When working on or discussing any OpenClaw skill or improvement, ensure a corresponding project note exists in `1-Projects/openclaw/` (or `1-Projects/<project>/` for non-OpenClaw work) and is kept up to date. After significant work (new decisions, architecture changes, completed phases), append updates to the relevant note via `obsidian-scribe`. This is the user's durable record — PRDs in the workspace are working docs, but the Obsidian note is what survives across sessions and agents.
 
 **Writing to vault:** Always use `obsidian-scribe`:
 ```bash
