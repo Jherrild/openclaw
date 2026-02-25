@@ -1,4 +1,4 @@
-# PRD: Structured Vault Memory Export
+# PRD: Obsidian as Primary Agent Memory
 
 ## Status: Draft
 ## Author: Jesten Herrild (via Copilot)
@@ -8,93 +8,149 @@
 
 ## Problem
 
-OpenClaw's memory system writes raw daily logs (`memory/YYYY-MM-DD.md`) and a curated `MEMORY.md`. These files are functional for agent recall via QMD but:
+OpenClaw's memory lives in workspace-local files (`memory/*.md`, `MEMORY.md`). These are:
 
-1. **Not human-browsable** — raw dumps with no structure, tags, or interlinks
-2. **Single point of failure** — workspace-only, no off-machine backup
-3. **No knowledge graph** — decisions, preferences, and facts are buried in chronological logs
-4. **No PARA integration** — notes don't land in the user's existing knowledge management structure
+1. **Not backed up** — tied to a single machine. If the WSL2 instance dies, agent memory is gone.
+2. **Not portable** — recreating the agent elsewhere means starting from scratch.
+3. **Not human-accessible** — raw dumps invisible to the user's knowledge tools.
+4. **Disconnected from the user's second brain** — the agent and user maintain separate, siloed knowledge stores.
 
-Users with external vaults (Obsidian, Logseq, etc.) want agent memory to be **durable, structured, and visible** in their existing tools.
+## Vision
 
-## Proposed Solution
+**The Obsidian vault IS the agent's memory.** Not a copy, not an export — the primary, authoritative store. The agent reads from and writes to the vault directly. The vault is synced, backed up, and browsable in Obsidian's UI (graph view, backlinks, search).
 
-Enhance the session-memory or compaction-flush pipeline to produce structured vault-compatible notes as a secondary output. The workspace `memory/*.md` remains the source of truth for QMD; the vault export is a **curated, human-readable projection**.
+If the machine crashes and Magnus needs to be rebuilt from scratch, the vault has everything needed to rehydrate him — preferences, decisions, project context, learned facts — in structured, human-readable notes with proper metadata.
 
-### What gets exported
+## Design Principles
 
-On `/new`, `/reset`, or compaction, extract from the session:
+1. **Vault-primary** — agent memory lives in Obsidian, not `memory/*.md`. QMD indexes the vault (already working). The workspace `memory/` directory becomes a write-through cache, not the source of truth.
+2. **Human-readable** — notes use proper frontmatter, tags, wiki-links. A human should be able to browse the vault and understand what the agent knows.
+3. **PARA-native** — notes land in the correct PARA location. Agent operational notes go to `2-Areas/Magnus/`. Project-specific memories go to `1-Projects/<project>/`.
+4. **Rehydration-ready** — a fresh agent install pointed at the same vault should be able to bootstrap from vault contents alone.
 
-| Content Type | Vault Destination | Example |
-|---|---|---|
-| Decisions | Append to project note | `[[openclaw]]: Switched primary model to Gemini Flash` |
-| Preferences | `2-Areas/Magnus/Preferences.md` | `Token frugality is paramount` |
-| Facts learned | `3-Resources/` or relevant area | `GLM-5 context window is 204,800 tokens` |
-| Action items | `1-Projects/<project>/` | `TODO: Submit pruning PR upstream` |
-| Session summary | `2-Areas/Magnus/Sessions/YYYY-MM-DD.md` | Daily digest with links |
+## Architecture
 
-### Note format
+### Write Path
+
+```
+Agent decides to store memory
+  → obsidian-scribe writes to vault (primary)
+  → optionally mirrors to workspace memory/*.md (cache for fast local access)
+  → QMD indexes vault on next sync cycle
+```
+
+### Read Path (already working)
+
+```
+Agent calls memory_search
+  → QMD searches vault + workspace memory
+  → Returns results from both sources (deduplicated)
+```
+
+### Memory Categories & Vault Locations
+
+| Category | Vault Path | Trigger | Format |
+|---|---|---|---|
+| Daily session log | `2-Areas/Magnus/Sessions/YYYY-MM-DD.md` | `/new`, `/reset`, compaction | Append-only daily digest |
+| Curated long-term | `2-Areas/Magnus/MEMORY.md` | Agent writes explicitly | Structured facts, prefs |
+| Project decisions | `1-Projects/<project>/Notes/` | Agent writes during project work | Decision log with context |
+| Learned facts | `2-Areas/Magnus/Knowledge/` | Agent learns something durable | Tagged, interlinked notes |
+| Rehydration bootstrap | `2-Areas/Magnus/Bootstrap.md` | Updated periodically | Identity, prefs, key relationships |
+
+### Note Format
 
 ```markdown
 ---
 date: 2026-02-25
-tags: [openclaw, memory, magnus]
-source: session-memory
-session: agent:main:telegram:5918274686
+tags: [openclaw, memory, magnus, config-audit]
+source: agent-memory
+aliases: [openclaw config audit]
 ---
 
+## Context
+Audited `openclaw.json` for legacy settings and token bloat.
+
 ## Decisions
-- Switched primary model to [[Gemini Flash]] due to rate limit issues with [[GLM-5]]
-- Enabled context pruning for all providers ([[openclaw-fork]])
+- Removed Google `models.providers` block — built-in catalog is sufficient
+- Fixed [[Minimax M2.5]] contextWindow: 256k → 196k (actual limit)
+- Enabled context pruning for all providers (PR [[openclaw-fork#25907]])
 
 ## Learned
-- QMD indexes Obsidian vaults natively via `memory.qmd.paths`
-- `isCacheTtlEligibleProvider` was the Anthropic-only gate
+- [[QMD]] indexes Obsidian vaults natively via `memory.qmd.paths`
+- [[Ollama]] cloud auth is SSH key-based, doesn't expire — system service needs separate signin
+- `hooks.token` must differ from `gateway.auth.token` since OpenClaw v2026.2.23
 
 ## Follow-up
-- [ ] Submit pruning PR upstream
-- [ ] Redesign obsidian-memory hook
+- [ ] Monitor pruning effectiveness on Gemini Flash
+- [ ] Build structured vault memory export (this PRD)
 ```
 
-### Architecture options
+### Rehydration Bootstrap
 
-#### Option A: Enhanced session-memory hook
-- Modify the built-in `session-memory` hook to produce a second output
-- Pros: Simple, fires on existing events
-- Cons: Hook runs synchronously before `/new` completes, limited context
+`2-Areas/Magnus/Bootstrap.md` is a special note that captures everything needed to recreate Magnus:
 
-#### Option B: Post-compaction vault export
-- New hook event `compaction:complete` fires after compaction
-- Export receives the compaction summary (already a structured digest)
-- Pros: Compaction summary is pre-distilled, best content quality
-- Cons: New hook event needed in OpenClaw core
+```markdown
+---
+tags: [magnus, bootstrap, identity]
+updated: 2026-02-25
+---
 
-#### Option C: Dedicated vault-export skill (agent-driven)
-- Agent periodically reviews `memory/*.md` and creates structured vault notes
-- Uses `obsidian-scribe` for writing, `local-rag` for dedup
-- Pros: No core changes, agent decides what's important
-- Cons: Token-expensive, unreliable (agent may forget)
+## Identity
+- Name: Magnus Clockthorne
+- User: Jesten Herrild (GitHub employee, Whidbey Island, WA)
+- Primary channel: Telegram (id:5918274686)
 
-### Recommended: Option B (post-compaction export)
+## Key Preferences
+- Token frugality is paramount
+- Conventional commits
+- PARA structure for Obsidian
+- Prefer systemd-backed solutions
+- obsidian-scribe for all vault writes
 
-Compaction already distills the session into a structured summary. Exporting that summary to the vault with proper frontmatter and wiki-links is lightweight and high-value. Requires one new hook event in OpenClaw core.
+## Active Models
+- Primary: Gemini 3 Flash Preview
+- Fallbacks: Minimax M2.5, GLM-5, Kimi K2.5
+- Subagents: GLM-5
+
+## Key Projects
+- [[openclaw]] fork with pruning and memory provider
+- [[copilot-daemon]] for automated issue processing
+- [[interrupt-service]] for event-driven architecture
+```
+
+## Implementation Phases
+
+### Phase 1: Write path (hook-based)
+- Modify `session-memory` hook (or replace with new hook) to write structured notes to vault via `obsidian-scribe`
+- Mirror to workspace `memory/*.md` for backward compatibility
+- QMD already indexes both locations
+
+### Phase 2: Agent-driven memory curation
+- Agent writes to vault directly during conversations (decisions, facts, project notes)
+- Add a `vault-memory` tool or enhance `memory_search`/`memory_get` to support vault writes
+- Agent maintains `Bootstrap.md` and `MEMORY.md` in the vault
+
+### Phase 3: Rehydration
+- On fresh install, `openclaw doctor` or a bootstrap hook detects vault and offers to import
+- Reads `Bootstrap.md` + recent session notes to populate initial agent context
+- QMD indexes vault immediately for full recall
 
 ## Configuration
 
 ```json
 {
-  "hooks": {
-    "internal": {
-      "entries": {
-        "vault-memory-export": {
-          "enabled": true,
-          "vaultPath": "/mnt/c/Users/Jherr/Documents/remote-personal",
-          "targetFolder": "2-Areas/Magnus/Sessions",
-          "tags": ["openclaw", "memory", "magnus"],
-          "format": "obsidian",
-          "writeVia": "obsidian-scribe"
-        }
-      }
+  "memory": {
+    "backend": "qmd",
+    "qmd": {
+      "paths": [{ "path": "/mnt/c/Users/Jherr/Documents/remote-personal" }]
+    },
+    "vault": {
+      "enabled": true,
+      "path": "/mnt/c/Users/Jherr/Documents/remote-personal",
+      "agentFolder": "2-Areas/Magnus",
+      "writeVia": "obsidian-scribe",
+      "mirrorToLocal": true,
+      "bootstrap": "2-Areas/Magnus/Bootstrap.md"
     }
   }
 }
@@ -102,19 +158,21 @@ Compaction already distills the session into a structured summary. Exporting tha
 
 ## Dependencies
 
-- `obsidian-scribe` skill (existing) for vault writes
-- QMD for deduplication (search before write)
-- New `compaction:complete` hook event in OpenClaw core (Option B)
+- `obsidian-scribe` skill (existing) for vault writes with linting
+- QMD (existing, working) for vault indexing and search
+- New `memory.vault` config section in OpenClaw
+- New hook event or enhanced session-memory hook
 
 ## Non-goals
 
-- Real-time streaming of conversation to vault (too noisy)
-- Replacing QMD's search with vault search (QMD is better)
-- Auto-filing into arbitrary PARA locations (start with fixed target folder)
+- Replacing QMD search with a custom vault search implementation
+- Real-time conversation streaming to vault (too noisy)
+- Automatic PARA categorization of arbitrary content (start with fixed paths)
 
-## Open questions
+## Open Questions
 
-1. Should the export happen on every compaction, or only on `/new`?
-2. How to extract wiki-links from unstructured conversation? (NER? keyword matching against vault filenames?)
-3. Should the agent review/approve the export before writing? (Token cost vs accuracy)
-4. Can this be a community hook on ClawHub rather than a core feature?
+1. Should `MEMORY.md` and `memory/*.md` in the workspace be deprecated, or kept as a local cache?
+2. How to handle the transition — migrate existing workspace memory to vault?
+3. Should the bootstrap note be agent-maintained or user-maintained?
+4. Wiki-link extraction: keyword match against vault filenames? Or explicit agent instruction?
+5. Is this an OpenClaw core feature, a hook, or a ClawHub skill?
