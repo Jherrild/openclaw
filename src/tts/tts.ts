@@ -649,13 +649,12 @@ export async function textToSpeech(params: {
         const tempDir = mkdtempSync(path.join(tempRoot, "tts-"));
         const audioPath = path.join(tempDir, `voice-${Date.now()}.wav`);
 
-        // Parse [speed:N] directive from text
+        // Parse [slow] directive from text
         let text = params.text;
         let speed = 1.0;
-        const speedMatch = text.match(/\[speed:([\d.]+)\]/);
-        if (speedMatch) {
-          speed = Math.max(0.5, Math.min(2.0, parseFloat(speedMatch[1])));
-          text = text.replace(speedMatch[0], "").trim();
+        if (/\[slow\]/i.test(text)) {
+          speed = 0.9;
+          text = text.replace(/\[slow\]/gi, "").trim();
         }
 
         // Auto-detect Spanish → use marto_spanish voice, otherwise magnus_english
