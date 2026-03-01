@@ -162,6 +162,13 @@ export function parseTtsDirectives(
               warnings.push(`invalid OpenAI voice "${rawValue}"`);
             }
             break;
+          case "local_voice":
+          case "localvoice":
+            if (!policy.allowVoice) {
+              break;
+            }
+            overrides.localVoice = rawValue;
+            break;
           case "voiceid":
           case "voice_id":
           case "elevenlabs_voice":

@@ -162,6 +162,7 @@ export type ResolvedTtsModelOverrides = {
 export type TtsDirectiveOverrides = {
   ttsText?: string;
   provider?: TtsProvider;
+  localVoice?: string;
   openai?: {
     voice?: string;
     model?: string;
@@ -665,16 +666,19 @@ export async function textToSpeech(params: {
           text = text.replace(/\[slow\]/gi, "").trim();
         }
 
-        // Resolve voice profile: channel override → Spanish detection → default → hardcoded fallback
+        // Resolve voice profile: override → channel → Spanish detection → default → hardcoded fallback
         const voicesDir = path.join(
           process.env.HOME ?? "/home/jherrild",
           ".openclaw/workspace/skills/tts-local/voices",
         );
+        const overrideVoice = params.overrides?.localVoice;
         const channelVoice = params.channelId
           ? config.local?.channelVoices?.[params.channelId]
           : undefined;
         let voiceName: string;
-        if (channelVoice) {
+        if (overrideVoice) {
+          voiceName = overrideVoice;
+        } else if (channelVoice) {
           voiceName = channelVoice;
         } else {
           const hasSpanish =
