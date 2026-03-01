@@ -834,11 +834,13 @@ export class DiscordVoiceManager {
       `tts streaming ${chunks.length} sentence(s): guild ${entry.guildId} channel ${entry.channelId}`,
     );
 
-    for (const chunk of chunks) {
+    let lastSpokenChunkIndex = -1;
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
       // Abort remaining TTS if user barged in
       if (entry.bargeInGeneration !== generationAtStart) {
         logVoiceVerbose(
-          `tts aborted (barge-in): skipping ${chunks.indexOf(chunk) + 1}/${chunks.length} guild ${entry.guildId}`,
+          `tts aborted (barge-in): skipping ${i + 1}/${chunks.length} guild ${entry.guildId}`,
         );
         break;
       }
@@ -856,6 +858,7 @@ export class DiscordVoiceManager {
       logVoiceVerbose(
         `tts chunk ok (${chunk.length} chars): guild ${entry.guildId} channel ${entry.channelId}`,
       );
+      lastSpokenChunkIndex = i;
 
       this.enqueuePlayback(entry, async () => {
         logVoiceVerbose(
@@ -871,6 +874,30 @@ export class DiscordVoiceManager {
         );
         logVoiceVerbose(`playback done: guild ${entry.guildId} channel ${entry.channelId}`);
       });
+    }
+
+    // If barge-in truncated the response, notify the agent what the user didn't hear
+    if (entry.bargeInGeneration !== generationAtStart && lastSpokenChunkIndex < chunks.length - 1) {
+      const unspoken = chunks.slice(lastSpokenChunkIndex + 1).join(" ");
+      if (unspoken.trim()) {
+        logVoiceVerbose(
+          `injecting barge-in context (${unspoken.length} chars unspoken): guild ${entry.guildId}`,
+        );
+        void agentCommand(
+          {
+            message: `[SYSTEM: The user interrupted you. Your response was cut off. The following part was NOT spoken and the user did NOT hear it: "${unspoken}"]`,
+            sessionKey: entry.route.sessionKey,
+            agentId: entry.route.agentId,
+            messageChannel: "discord",
+            deliver: false,
+          },
+          this.params.runtime,
+        ).catch((err) =>
+          logger.warn(
+            `discord voice: barge-in context injection failed: ${formatErrorMessage(err)}`,
+          ),
+        );
+      }
     }
   }
 
