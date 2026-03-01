@@ -130,6 +130,8 @@ export type ResolvedTtsConfig = {
   };
   local?: {
     url: string;
+    defaultVoice?: string;
+    channelVoices?: Record<string, string>;
   };
   prefsPath?: string;
   maxTextLength: number;
@@ -306,11 +308,16 @@ export function resolveTtsConfig(cfg: OpenClawConfig): ResolvedTtsConfig {
       proxy: raw.edge?.proxy?.trim() || undefined,
       timeoutMs: raw.edge?.timeoutMs,
     },
-    local: raw.local?.url
-      ? { url: raw.local.url }
-      : raw.provider === "local"
-        ? { url: "http://127.0.0.1:7860" }
-        : undefined,
+    local:
+      raw.local?.url || raw.local?.defaultVoice || raw.local?.channelVoices
+        ? {
+            url: raw.local?.url ?? "http://127.0.0.1:7860",
+            defaultVoice: raw.local?.defaultVoice,
+            channelVoices: raw.local?.channelVoices,
+          }
+        : raw.provider === "local"
+          ? { url: "http://127.0.0.1:7860" }
+          : undefined,
     prefsPath: raw.prefsPath,
     maxTextLength: raw.maxTextLength ?? DEFAULT_MAX_TEXT_LENGTH,
     timeoutMs: raw.timeoutMs ?? DEFAULT_TIMEOUT_MS,
@@ -548,6 +555,7 @@ export async function textToSpeech(params: {
   cfg: OpenClawConfig;
   prefsPath?: string;
   channel?: string;
+  channelId?: string;
   overrides?: TtsDirectiveOverrides;
 }): Promise<TtsResult> {
   const config = resolveTtsConfig(params.cfg);
@@ -657,17 +665,27 @@ export async function textToSpeech(params: {
           text = text.replace(/\[slow\]/gi, "").trim();
         }
 
-        // Auto-detect Spanish → use marto_spanish voice, otherwise magnus_english
+        // Resolve voice profile: channel override → Spanish detection → default → hardcoded fallback
         const voicesDir = path.join(
           process.env.HOME ?? "/home/jherrild",
           ".openclaw/workspace/skills/tts-local/voices",
         );
-        const hasSpanish =
-          /[ñáéíóúü¿¡]/i.test(text) ||
-          /\b(?:el|la|los|las|es|que|por|para|como|pero|con|una?|del|al|más|muy|tiene|puede|está|son|hay|esto|esta|hace|desde|cuando|donde|ahora|bien|todo|también|sin|sobre|entre|otro|otra|después|antes|aquí|cada|fue|ser|hoy|vamos)\b/i.test(
-            text,
-          );
-        const voiceName = hasSpanish ? "marto_spanish" : "magnus_english";
+        const channelVoice = params.channelId
+          ? config.local?.channelVoices?.[params.channelId]
+          : undefined;
+        let voiceName: string;
+        if (channelVoice) {
+          voiceName = channelVoice;
+        } else {
+          const hasSpanish =
+            /[ñáéíóúü¿¡]/i.test(text) ||
+            /\b(?:el|la|los|las|es|que|por|para|como|pero|con|una?|del|al|más|muy|tiene|puede|está|son|hay|esto|esta|hace|desde|cuando|donde|ahora|bien|todo|también|sin|sobre|entre|otro|otra|después|antes|aquí|cada|fue|ser|hoy|vamos)\b/i.test(
+              text,
+            );
+          voiceName = hasSpanish
+            ? "marto_spanish"
+            : (config.local?.defaultVoice ?? "magnus_english");
+        }
         const voicePath = path.join(voicesDir, `${voiceName}.wav`);
 
         const body: Record<string, unknown> = { text };

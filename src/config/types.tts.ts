@@ -77,6 +77,10 @@ export type TtsConfig = {
   local?: {
     /** Base URL for the local TTS server. Default: http://127.0.0.1:7860 */
     url?: string;
+    /** Default voice profile name (from voices/ directory). Falls back to language auto-detection. */
+    defaultVoice?: string;
+    /** Per-channel voice overrides. Keys are channel IDs, values are voice profile names. */
+    channelVoices?: Record<string, string>;
   };
   /** Optional path for local TTS user preferences JSON. */
   prefsPath?: string;

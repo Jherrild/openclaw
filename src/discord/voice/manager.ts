@@ -848,6 +848,7 @@ export class DiscordVoiceManager {
         text: chunk,
         cfg: ttsCfg,
         channel: "discord",
+        channelId: entry.channelId,
         overrides: directive.overrides,
       });
       if (!ttsResult.success || !ttsResult.audioPath) {
