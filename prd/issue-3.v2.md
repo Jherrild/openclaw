@@ -21,6 +21,13 @@ High-level flow after change:
 3. Voice manager buffers deltas, emits complete sentences immediately to TTS/playback, and flushes final remainder at turn completion.
 4. Canonical final response persistence still uses final `agentCommand` payload/result path (not streaming side effects).
 
+## Prior Review Feedback Status
+
+- Prior draft concern: relying only on existing `onAgentEvent` in `agentCommand` did not satisfy issue-required runner callback plumbing.  
+  **Addressed:** Stage 1 now explicitly threads `onTextDelta` through `runEmbeddedPiAgent`/`runEmbeddedAttempt` and subscription handlers.
+- Prior draft concern: barge-in handling was underspecified relative to existing voice improvements.  
+  **Addressed:** Stage 4 now explicitly reuses the existing generation invalidation path (or adds the minimal equivalent only if missing).
+
 ## Goals
 
 - Reduce first-audio latency for voice responses.
@@ -107,7 +114,9 @@ Acceptance criteria:
 - First TTS generation can begin before `agentCommand` resolves.
 - Sentences are spoken in generation order.
 - Final trailing fragment is spoken once on completion.
+- If final payload contains unseen suffix text beyond streamed deltas, only that unseen suffix is spoken on completion.
 - Non-streaming models still produce one spoken response.
+- Existing TTS directive behavior remains consistent across streamed chunks (overrides persist for the full turn).
 
 ### Stage 3 Test Plan
 
@@ -117,6 +126,8 @@ Acceptance criteria:
   2. `processSegment_waits_for_sentence_boundary` — Input: deltas `"This is incom"` then `"plete"` then `". Next"`. Expected: no TTS before period; first TTS chunk is `"This is incomplete."`.
   3. `processSegment_flushes_trailing_fragment_on_completion` — Input: deltas `"No punctuation tail"` and command resolve with final payload same text. Expected: exactly one TTS call with `"No punctuation tail"`.
   4. `processSegment_non_streaming_fallback_speaks_once` — Input: no deltas; final payload `"Only final text."`. Expected: one TTS call for `"Only final text."`.
+  5. `processSegment_flushes_only_unseen_suffix_from_final_payload` — Input: deltas stream `"Hello "` then `"world."`, final payload resolves to `"Hello world. Extra tail."`. Expected: streamed sentence `"Hello world."` is not repeated; only `"Extra tail."` is dispatched at completion.
+  6. `processSegment_preserves_tts_directive_overrides_across_streamed_chunks` — Input: first delta includes directive token (for example `[slow]`) and subsequent sentence deltas. Expected: directive override is applied consistently to all spoken chunks in that response.
 
 ---
 
@@ -124,7 +135,7 @@ Acceptance criteria:
 
 Integrate sentence streaming with generation invalidation and persistence safeguards:
 
-- Add/use `bargeInGeneration` monotonic counter on voice session entry (increment when user interrupts).
+- Reuse existing `bargeInGeneration` monotonic counter from the voice improvements baseline; if absent in target branch, add the minimal equivalent on voice session entry (increment when user interrupts).
 - Stamp each TTS/playback task with generation; skip stale generation tasks.
 - Ensure final persisted assistant output remains the complete final response (streaming callback is side-channel only).
 
@@ -171,8 +182,8 @@ Acceptance criteria:
 4. **Behavior regressions for non-voice callers**
    - Mitigation: callback remains optional; add explicit no-callback regression tests.
 
-## Open Questions for Reviewer
+## Resolved Defaults
 
-1. Should newline-only boundaries trigger immediate sentence dispatch even without punctuation, or only when followed by another clause?
-2. On barge-in, should stale generated audio files be proactively deleted for disk hygiene, or left to existing temp cleanup behavior?
-3. Should voice streaming callback include metadata (`runId`, `isFinal`) in future, or keep current minimal `delta: string` shape for v1?
+1. Sentence dispatch boundaries for v1 are punctuation (`.`, `!`, `?`) plus newline breaks; completion flush handles any remaining tail.
+2. Stale barge-in artifacts are skipped (not proactively deleted) and rely on existing temp cleanup lifecycle.
+3. Callback shape remains `onTextDelta(delta: string)` for v1; metadata can be added in a future, backward-compatible extension if needed.
