@@ -55,6 +55,32 @@ const logVoiceVerbose = (message: string) => {
   logVerbose(`discord voice: ${message}`);
 };
 
+const VOICES_DIR = path.join(
+  process.env.HOME ?? "/home/jherrild",
+  ".openclaw/workspace/skills/tts-local/voices",
+);
+let _cachedVoiceProfiles: string[] | null = null;
+let _voiceCacheTime = 0;
+const VOICE_CACHE_TTL_MS = 60_000;
+
+async function listVoiceProfiles(): Promise<string[]> {
+  const now = Date.now();
+  if (_cachedVoiceProfiles && now - _voiceCacheTime < VOICE_CACHE_TTL_MS) {
+    return _cachedVoiceProfiles;
+  }
+  try {
+    const files = await fs.readdir(VOICES_DIR);
+    _cachedVoiceProfiles = files
+      .filter((f) => f.endsWith(".wav") && !f.endsWith(".bak"))
+      .map((f) => f.replace(/\.wav$/, ""))
+      .toSorted();
+    _voiceCacheTime = now;
+    return _cachedVoiceProfiles;
+  } catch {
+    return _cachedVoiceProfiles ?? [];
+  }
+}
+
 /**
  * Detect Whisper hallucinations on silence/noise and bot echo.
  * Whisper commonly hallucinates these phrases when fed silence, background noise,
@@ -760,12 +786,14 @@ export class DiscordVoiceManager {
     const prompt = speakerLabel ? `${speakerLabel}: ${transcript}` : transcript;
 
     // Inject voice context so the agent knows its text will be spoken aloud
+    const voiceNames = await listVoiceProfiles();
+    const voiceList = voiceNames.length > 0 ? voiceNames.join(", ") : "magnus_english (default)";
     const voiceContext = [
       "[VOICE MODE] Your response will be spoken aloud via text-to-speech.",
       "Keep responses concise and conversational. Avoid markdown, lists, or code blocks.",
       "Spanish text automatically uses a Spanish voice. Prepend [slow] to speak slower.",
       "Use [[tts:local_voice=NAME]] at the start of a line to speak in a specific voice.",
-      "Available voices: magnus_english, marto_spanish, british_english, elinor, marianne, edward, brandon, john_dashwood, mrs_dashwood, willoughby, fanny, lucy.",
+      `Available voices: ${voiceList}.`,
     ].join(" ");
 
     const result = await agentCommand(
