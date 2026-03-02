@@ -42,7 +42,7 @@ const SAMPLE_RATE = 48_000;
 const CHANNELS = 2;
 const BIT_DEPTH = 16;
 const MIN_SEGMENT_SECONDS = 0.35;
-const SILENCE_DURATION_MS = 1_000;
+const SILENCE_DURATION_MS = 1_500;
 const PLAYBACK_READY_TIMEOUT_MS = 15_000;
 const SPEAKING_READY_TIMEOUT_MS = 60_000;
 const DECRYPT_FAILURE_WINDOW_MS = 30_000;
@@ -54,6 +54,62 @@ const logger = createSubsystemLogger("discord/voice");
 const logVoiceVerbose = (message: string) => {
   logVerbose(`discord voice: ${message}`);
 };
+
+const VOICES_DIR = path.join(
+  process.env.HOME ?? "/home/jherrild",
+  ".openclaw/workspace/skills/tts-local/voices",
+);
+let _cachedVoiceProfiles: string[] | null = null;
+let _voiceCacheTime = 0;
+const VOICE_CACHE_TTL_MS = 60_000;
+
+async function listVoiceProfiles(): Promise<string[]> {
+  const now = Date.now();
+  if (_cachedVoiceProfiles && now - _voiceCacheTime < VOICE_CACHE_TTL_MS) {
+    return _cachedVoiceProfiles;
+  }
+  try {
+    const files = await fs.readdir(VOICES_DIR);
+    _cachedVoiceProfiles = files
+      .filter((f) => f.endsWith(".wav") && !f.endsWith(".bak"))
+      .map((f) => f.replace(/\.wav$/, ""))
+      .toSorted();
+    _voiceCacheTime = now;
+    return _cachedVoiceProfiles;
+  } catch {
+    return _cachedVoiceProfiles ?? [];
+  }
+}
+
+/**
+ * Detect Whisper hallucinations on silence/noise and bot echo.
+ * Whisper commonly hallucinates these phrases when fed silence, background noise,
+ * or echo of the bot's own TTS output picked up by the user's microphone.
+ */
+const NOISE_HALLUCINATION_PATTERNS = [
+  /^\.+$/, // just periods
+  /^\s*$/, // whitespace only
+  /thank(s| you) (for|so much)/i, // common hallucination
+  /^(you|you're welcome)/i, // common hallucination on silence
+  /^(bye|goodbye|see you)/i, // farewell hallucinations
+  /please (like|subscribe)/i, // YouTube-trained hallucination
+  /^(uh+|um+|hmm+|ah+|oh+)\.?$/i, // filler sounds only
+  /^\[.*\]$/, // bracketed noise labels like [Music], [Applause]
+  /^thanks for watching/i, // classic Whisper silence hallucination
+  /^(the|this|that|it|i)\s*$/i, // single-word fragments
+];
+
+function isNoiseOrEcho(transcript: string): boolean {
+  const trimmed = transcript.trim();
+  if (trimmed.length === 0) {
+    return true;
+  }
+  // Very short transcripts (< 4 chars) are almost always noise
+  if (trimmed.length < 4) {
+    return true;
+  }
+  return NOISE_HALLUCINATION_PATTERNS.some((pattern) => pattern.test(trimmed));
+}
 
 type VoiceOperationResult = {
   ok: boolean;
@@ -72,6 +128,8 @@ type VoiceSessionEntry = {
   playbackQueue: Promise<void>;
   processingQueue: Promise<void>;
   activeSpeakers: Set<string>;
+  /** Incremented on barge-in; TTS loops check this to abort stale responses */
+  bargeInGeneration: number;
   decryptFailureCount: number;
   lastDecryptFailureAt: number;
   decryptRecoveryInFlight: boolean;
@@ -190,20 +248,27 @@ async function decodeOpusStream(stream: Readable): Promise<Buffer> {
   }
   logVoiceVerbose(`opus decoder: ${selected.name}`);
   const chunks: Buffer[] = [];
+  let decodeErrors = 0;
   try {
     for await (const chunk of stream) {
       if (!chunk || !(chunk instanceof Buffer) || chunk.length === 0) {
         continue;
       }
-      const decoded = selected.decoder.decode(chunk);
-      if (decoded && decoded.length > 0) {
-        chunks.push(Buffer.from(decoded));
+      try {
+        const decoded = selected.decoder.decode(chunk);
+        if (decoded && decoded.length > 0) {
+          chunks.push(Buffer.from(decoded));
+        }
+      } catch {
+        // Skip invalid packets (e.g. DAVE handshake frames) instead of aborting
+        decodeErrors++;
       }
     }
   } catch (err) {
-    if (shouldLogVerbose()) {
-      logVerbose(`discord voice: opus decode failed: ${formatErrorMessage(err)}`);
-    }
+    logger.warn(`discord voice: opus stream error: ${formatErrorMessage(err)}`);
+  }
+  if (decodeErrors > 0) {
+    logger.info(`discord voice: opus decode skipped ${decodeErrors} invalid packet(s)`);
   }
   return chunks.length > 0 ? Buffer.concat(chunks) : Buffer.alloc(0);
 }
@@ -433,8 +498,8 @@ export class DiscordVoiceManager {
     const adapterCreator = voicePlugin.getGatewayAdapterCreator(guildId);
     const daveEncryption = this.params.discordConfig.voice?.daveEncryption;
     const decryptionFailureTolerance = this.params.discordConfig.voice?.decryptionFailureTolerance;
-    logVoiceVerbose(
-      `join: DAVE settings encryption=${daveEncryption === false ? "off" : "on"} tolerance=${
+    logger.info(
+      `discord voice: join: DAVE encryption=${daveEncryption === false ? "off" : "on"} tolerance=${
         decryptionFailureTolerance ?? "default"
       }`,
     );
@@ -448,10 +513,24 @@ export class DiscordVoiceManager {
       decryptionFailureTolerance,
     });
 
+    // Log all connection state transitions
+    for (const state of [
+      VoiceConnectionStatus.Signalling,
+      VoiceConnectionStatus.Connecting,
+      VoiceConnectionStatus.Ready,
+      VoiceConnectionStatus.Disconnected,
+      VoiceConnectionStatus.Destroyed,
+    ]) {
+      connection.on(state, () => {
+        logger.info(`discord voice: connection state → ${state} (guild=${guildId})`);
+      });
+    }
+
     try {
       await entersState(connection, VoiceConnectionStatus.Ready, PLAYBACK_READY_TIMEOUT_MS);
-      logVoiceVerbose(`join: connected to guild ${guildId} channel ${channelId}`);
+      logger.info(`discord voice: join: connected to guild ${guildId} channel ${channelId}`);
     } catch (err) {
+      logger.warn(`discord voice: join: failed to reach Ready state: ${formatErrorMessage(err)}`);
       connection.destroy();
       return { ok: false, message: `Failed to join voice channel: ${formatErrorMessage(err)}` };
     }
@@ -496,6 +575,7 @@ export class DiscordVoiceManager {
       playbackQueue: Promise.resolve(),
       processingQueue: Promise.resolve(),
       activeSpeakers: new Set(),
+      bargeInGeneration: 0,
       decryptFailureCount: 0,
       lastDecryptFailureAt: 0,
       decryptRecoveryInFlight: false,
@@ -518,12 +598,14 @@ export class DiscordVoiceManager {
     };
 
     speakingHandler = (userId: string) => {
+      logger.info(`discord voice: speaking START from user ${userId} (guild=${guildId})`);
       void this.handleSpeakingStart(entry, userId).catch((err) => {
         logger.warn(`discord voice: capture failed: ${formatErrorMessage(err)}`);
       });
     };
 
     disconnectedHandler = async () => {
+      logger.info(`discord voice: connection disconnected (guild=${guildId})`);
       try {
         await Promise.race([
           entersState(connection, VoiceConnectionStatus.Signalling, 5_000),
@@ -542,9 +624,17 @@ export class DiscordVoiceManager {
     };
 
     connection.receiver.speaking.on("start", speakingHandler);
+    connection.receiver.speaking.on("end", (userId: string) => {
+      logger.info(`discord voice: speaking END from user ${userId} (guild=${guildId})`);
+    });
     connection.on(VoiceConnectionStatus.Disconnected, disconnectedHandler);
     connection.on(VoiceConnectionStatus.Destroyed, destroyedHandler);
     player.on("error", playerErrorHandler);
+
+    // Log receiver debug info
+    logger.info(
+      `discord voice: receiver registered. selfDeaf=${connection.joinConfig.selfDeaf} selfMute=${connection.joinConfig.selfMute}`,
+    );
 
     this.sessions.set(guildId, entry);
     return {
@@ -597,6 +687,9 @@ export class DiscordVoiceManager {
 
   private async handleSpeakingStart(entry: VoiceSessionEntry, userId: string) {
     if (!userId || entry.activeSpeakers.has(userId)) {
+      logger.info(
+        `discord voice: handleSpeakingStart skipped: userId=${userId} alreadyActive=${entry.activeSpeakers.has(userId)}`,
+      );
       return;
     }
     if (this.botUserId && userId === this.botUserId) {
@@ -604,12 +697,16 @@ export class DiscordVoiceManager {
     }
 
     entry.activeSpeakers.add(userId);
-    logVoiceVerbose(
-      `capture start: guild ${entry.guildId} channel ${entry.channelId} user ${userId}`,
+    logger.info(
+      `discord voice: capture start: guild ${entry.guildId} channel ${entry.channelId} user ${userId}`,
     );
+    // Barge-in: stop current playback AND flush the entire playback queue
     if (entry.player.state.status === AudioPlayerStatus.Playing) {
       entry.player.stop(true);
     }
+    entry.bargeInGeneration++;
+    entry.playbackQueue = Promise.resolve();
+    logVoiceVerbose(`barge-in: flushed playback queue (generation ${entry.bargeInGeneration})`);
 
     const stream = entry.connection.receiver.subscribe(userId, {
       end: {
@@ -617,28 +714,32 @@ export class DiscordVoiceManager {
         duration: SILENCE_DURATION_MS,
       },
     });
+    logger.info(`discord voice: subscribed to audio stream for user ${userId}`);
     stream.on("error", (err) => {
+      logger.warn(`discord voice: stream error for user ${userId}: ${formatErrorMessage(err)}`);
       this.handleReceiveError(entry, err);
     });
 
     try {
+      logger.info(`discord voice: decoding opus stream for user ${userId}...`);
       const pcm = await decodeOpusStream(stream);
+      logger.info(`discord voice: opus decode complete: ${pcm.length} bytes for user ${userId}`);
       if (pcm.length === 0) {
-        logVoiceVerbose(
-          `capture empty: guild ${entry.guildId} channel ${entry.channelId} user ${userId}`,
+        logger.info(
+          `discord voice: capture empty: guild ${entry.guildId} channel ${entry.channelId} user ${userId}`,
         );
         return;
       }
       this.resetDecryptFailureState(entry);
       const { path: wavPath, durationSeconds } = await writeWavFile(pcm);
       if (durationSeconds < MIN_SEGMENT_SECONDS) {
-        logVoiceVerbose(
-          `capture too short (${durationSeconds.toFixed(2)}s): guild ${entry.guildId} channel ${entry.channelId} user ${userId}`,
+        logger.info(
+          `discord voice: capture too short (${durationSeconds.toFixed(2)}s): guild ${entry.guildId} user ${userId}`,
         );
         return;
       }
-      logVoiceVerbose(
-        `capture ready (${durationSeconds.toFixed(2)}s): guild ${entry.guildId} channel ${entry.channelId} user ${userId}`,
+      logger.info(
+        `discord voice: capture ready (${durationSeconds.toFixed(2)}s): guild ${entry.guildId} user ${userId}`,
       );
       this.enqueueProcessing(entry, async () => {
         await this.processSegment({ entry, wavPath, userId, durationSeconds });
@@ -655,8 +756,9 @@ export class DiscordVoiceManager {
     durationSeconds: number;
   }) {
     const { entry, wavPath, userId, durationSeconds } = params;
-    logVoiceVerbose(
-      `segment processing (${durationSeconds.toFixed(2)}s): guild ${entry.guildId} channel ${entry.channelId}`,
+    const generationAtStart = entry.bargeInGeneration;
+    logger.info(
+      `discord voice: segment processing (${durationSeconds.toFixed(2)}s): guild ${entry.guildId} channel ${entry.channelId}`,
     );
     const transcript = await transcribeAudio({
       cfg: this.params.cfg,
@@ -664,23 +766,34 @@ export class DiscordVoiceManager {
       filePath: wavPath,
     });
     if (!transcript) {
-      logVoiceVerbose(
-        `transcription empty: guild ${entry.guildId} channel ${entry.channelId} user ${userId}`,
+      logger.info(`discord voice: transcription empty: guild ${entry.guildId} user ${userId}`);
+      return;
+    }
+
+    // Filter out noise, echo, and Whisper hallucinations on silence/background audio
+    if (isNoiseOrEcho(transcript)) {
+      logger.info(
+        `discord voice: filtered noise/echo transcript: "${transcript}" guild ${entry.guildId} user ${userId}`,
       );
       return;
     }
-    logVoiceVerbose(
-      `transcription ok (${transcript.length} chars): guild ${entry.guildId} channel ${entry.channelId}`,
+
+    logger.info(
+      `discord voice: transcription ok (${transcript.length} chars): guild ${entry.guildId} user ${userId}`,
     );
 
     const speakerLabel = await this.resolveSpeakerLabel(entry.guildId, userId);
     const prompt = speakerLabel ? `${speakerLabel}: ${transcript}` : transcript;
 
     // Inject voice context so the agent knows its text will be spoken aloud
+    const voiceNames = await listVoiceProfiles();
+    const voiceList = voiceNames.length > 0 ? voiceNames.join(", ") : "magnus_english (default)";
     const voiceContext = [
       "[VOICE MODE] Your response will be spoken aloud via text-to-speech.",
       "Keep responses concise and conversational. Avoid markdown, lists, or code blocks.",
       "Spanish text automatically uses a Spanish voice. Prepend [slow] to speak slower.",
+      "Use [[tts:local_voice=NAME]] at the start of a line to speak in a specific voice.",
+      `Available voices: ${voiceList}.`,
     ].join(" ");
 
     const result = await agentCommand(
@@ -693,6 +806,14 @@ export class DiscordVoiceManager {
       },
       this.params.runtime,
     );
+
+    // If user barged in while we were waiting for the LLM, discard this response
+    if (entry.bargeInGeneration !== generationAtStart) {
+      logVoiceVerbose(
+        `response discarded (barge-in during LLM): guild ${entry.guildId} user ${userId}`,
+      );
+      return;
+    }
 
     const replyText = (result.payloads ?? [])
       .map((payload) => payload.text)
@@ -743,11 +864,21 @@ export class DiscordVoiceManager {
       `tts streaming ${chunks.length} sentence(s): guild ${entry.guildId} channel ${entry.channelId}`,
     );
 
-    for (const chunk of chunks) {
+    let lastSpokenChunkIndex = -1;
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
+      // Abort remaining TTS if user barged in
+      if (entry.bargeInGeneration !== generationAtStart) {
+        logVoiceVerbose(
+          `tts aborted (barge-in): skipping ${i + 1}/${chunks.length} guild ${entry.guildId}`,
+        );
+        break;
+      }
       const ttsResult = await textToSpeech({
         text: chunk,
         cfg: ttsCfg,
         channel: "discord",
+        channelId: entry.channelId,
         overrides: directive.overrides,
       });
       if (!ttsResult.success || !ttsResult.audioPath) {
@@ -758,6 +889,7 @@ export class DiscordVoiceManager {
       logVoiceVerbose(
         `tts chunk ok (${chunk.length} chars): guild ${entry.guildId} channel ${entry.channelId}`,
       );
+      lastSpokenChunkIndex = i;
 
       this.enqueuePlayback(entry, async () => {
         logVoiceVerbose(
@@ -773,6 +905,30 @@ export class DiscordVoiceManager {
         );
         logVoiceVerbose(`playback done: guild ${entry.guildId} channel ${entry.channelId}`);
       });
+    }
+
+    // If barge-in truncated the response, notify the agent what the user didn't hear
+    if (entry.bargeInGeneration !== generationAtStart && lastSpokenChunkIndex < chunks.length - 1) {
+      const unspoken = chunks.slice(lastSpokenChunkIndex + 1).join(" ");
+      if (unspoken.trim()) {
+        logVoiceVerbose(
+          `injecting barge-in context (${unspoken.length} chars unspoken): guild ${entry.guildId}`,
+        );
+        void agentCommand(
+          {
+            message: `[SYSTEM: The user interrupted you. Your response was cut off. The following part was NOT spoken and the user did NOT hear it: "${unspoken}"]`,
+            sessionKey: entry.route.sessionKey,
+            agentId: entry.route.agentId,
+            messageChannel: "discord",
+            deliver: false,
+          },
+          this.params.runtime,
+        ).catch((err) =>
+          logger.warn(
+            `discord voice: barge-in context injection failed: ${formatErrorMessage(err)}`,
+          ),
+        );
+      }
     }
   }
 

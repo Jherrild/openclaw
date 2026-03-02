@@ -424,6 +424,8 @@ export const TtsConfigSchema = z
     local: z
       .object({
         url: z.string().optional(),
+        defaultVoice: z.string().optional(),
+        channelVoices: z.record(z.string(), z.string()).optional(),
       })
       .strict()
       .optional(),

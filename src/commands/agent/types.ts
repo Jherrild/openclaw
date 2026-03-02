@@ -29,6 +29,7 @@ export type AgentRunContext = {
 
 export type AgentCommandOpts = {
   message: string;
+  onTextDelta?: (delta: string) => void;
   /** Optional image attachments for multimodal messages. */
   images?: ImageContent[];
   /** Optional client-provided tools (OpenResponses hosted tools). */
