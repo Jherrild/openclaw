@@ -10,159 +10,133 @@ The current Discord voice flow blocks on `agentCommand()` until the full model r
 
 ## Proposed Approach
 
-Add an optional text-delta callback from the embedded runner all the way to voice processing:
+Use the existing embedded assistant stream events instead of adding a new runner-level stream hook:
 
-1. **Runner plumbing:** Add `onTextDelta?: (delta: string) => void` to embedded run params and invoke it from the existing assistant stream update path (`text_delta`/`text_start`/`text_end` normalized deltas).
-2. **Command plumbing:** Add the same optional callback to `AgentCommandOpts` and forward it through `agentCommand` → `runEmbeddedPiAgent` → `runEmbeddedAttempt`.
-3. **Voice streaming pipeline:** In `DiscordVoiceManager.processSegment`, replace blocking “wait full reply then split” with a streaming accumulator that:
-   - buffers deltas,
-   - emits complete sentences immediately to TTS/playback,
-   - leaves incomplete tail text buffered until enough punctuation arrives or run completion flushes it.
-4. **Barge-in safety:** Tag sentence-generation work with a monotonic generation token (aligned with the existing/expected `bargeInGeneration` model), and skip stale TTS/playback when a newer speaker interruption supersedes the old response.
-5. **History integrity:** Continue using the normal final `agentCommand` result as the source of truth for persisted session/transcript state; streaming callback is side-channel only.
+1. **Command callback contract:** Add optional `onTextDelta?: (delta: string) => void` to `AgentCommandOpts`.
+2. **Embedded path bridging (no runner plumbing):** In `agentCommand`, compose the existing embedded `onAgentEvent` callback so that when `stream === "assistant"` and `data.delta` is non-empty, `onTextDelta(data.delta)` is invoked. Keep existing lifecycle tracking logic intact.
+3. **ACP path parity:** In ACP `text_delta` handling, invoke `onTextDelta(event.text)` in addition to current aggregated `streamedText` behavior.
+4. **Voice streaming pipeline:** In `DiscordVoiceManager.processSegment`, start `agentCommand` with `onTextDelta`, buffer incoming text, emit complete sentences to TTS immediately, and flush trailing text when the run completes.
+5. **Barge-in gating:** Add a monotonic per-session generation counter in voice manager and gate both TTS generation and playback tasks so stale chunks are skipped after interruption.
+6. **History integrity:** Keep final persistence sourced from the final `agentCommand` result; streaming remains playback-only side channel.
 
 ## Scope
 
 ### In Scope
 
-- Embedded runner text delta callback threading.
-- `agentCommand` optional callback support without breaking existing callers.
-- Voice sentence streaming + early TTS start.
-- Barge-in-aware cancellation/skip behavior at sentence granularity.
-- Regression coverage for transcript/session-history final output.
+- `AgentCommandOpts` optional text-delta callback.
+- Embedded/ACP callback invocation from `agentCommand`.
+- Voice sentence streaming + early TTS start in `src/discord/voice/manager.ts`.
+- Generation-token stale-chunk suppression for barge-in.
+- Regression coverage for final response/session history integrity.
 
 ### Out of Scope
 
-- Changing ACP runtime behavior beyond preserving current semantics.
+- Changes to `runEmbeddedPiAgent`/`runEmbeddedAttempt` stream internals.
 - Reworking TTS provider internals.
-- Replacing existing directive parsing rules (`parseTtsDirectives`) beyond what sentence streaming needs.
+- Changing ACP runtime protocol/event schema.
 
 ## Implementation Stages
 
-### Stage 1 — Embedded runner delta callback plumbing
+### Stage 1 — `agentCommand` text-delta callback (non-breaking)
 
-Implement optional `onTextDelta` in:
+Implement optional callback support in:
 
-- `src/agents/pi-embedded-runner/run/params.ts`
-- `src/agents/pi-embedded-runner/run/types.ts` (if needed for attempt typing)
-- `src/agents/pi-embedded-runner/run.ts`
-- `src/agents/pi-embedded-runner/run/attempt.ts`
-- `src/agents/pi-embedded-subscribe.handlers.messages.ts` (or nearest stream event adapter) to invoke callback only for normalized assistant text deltas.
+- `src/commands/agent/types.ts` (`AgentCommandOpts`)
+- `src/commands/agent.ts` (invoke callback in embedded assistant-delta path and ACP `text_delta` path)
 
 **Acceptance criteria**
 
-- Callback receives monotonic assistant text deltas in model output order.
-- No callback emission for non-assistant/tool lifecycle events.
-- Existing behavior unchanged when callback is undefined.
+- Existing callsites compile unchanged.
+- Embedded assistant delta events invoke callback with monotonic deltas.
+- ACP `text_delta` events invoke callback.
+- Callback remains optional and no-op when omitted.
 
 ### Stage 1 Test Plan
 
-- **Test file:** `src/agents/pi-embedded-runner/run/attempt.test.ts`
-- **Test cases:**
-  1. `runEmbeddedAttempt_forwards_assistant_text_deltas` — Input: mocked assistant stream emits `text_start(content="Hello")`, `text_delta(delta=" world.")`, tool events, then `text_end(content="Hello world. Next.")`. Expected: `onTextDelta` receives exactly `["Hello", " world.", " Next."]` in order; tool events produce no callback calls.
-  2. `runEmbeddedAttempt_noop_when_onTextDelta_missing` — Input: same stream as above with `onTextDelta` omitted. Expected: attempt completes successfully, no thrown errors, and final assistant text remains `"Hello world. Next."`.
-
----
-
-### Stage 2 — `agentCommand` API threading (non-breaking)
-
-Add optional callback to command-layer types and forwarding:
-
-- `src/commands/agent/types.ts` (`AgentCommandOpts`)
-- `src/commands/agent.ts` (forward in `runAgentAttempt` to embedded path)
-
-**Acceptance criteria**
-
-- Existing non-voice callsites compile unchanged.
-- Embedded path forwards callback.
-- ACP path remains unaffected (still uses ACP event flow and final aggregation).
-
-### Stage 2 Test Plan
-
 - **Test file:** `src/commands/agent.test.ts`
 - **Test cases:**
-  1. `agentCommand_forwards_onTextDelta_to_embedded_runner` — Input: call `agentCommand({ message:"hi", to:"+1555", onTextDelta: spy })` with embedded runner mocked. Expected: mocked `runEmbeddedPiAgent` receives the same callback function reference in params.
-  2. `agentCommand_keeps_existing_behavior_without_onTextDelta` — Input: call `agentCommand({ message:"hi", to:"+1555" })` with no callback. Expected: returns existing payloads and logs/output behavior unchanged.
+  1. `agentCommand_embedded_forwards_assistant_deltas_to_onTextDelta` — embedded run emits assistant deltas and tool/lifecycle events; only assistant deltas trigger callback, in order.
+  2. `agentCommand_without_onTextDelta_preserves_existing_behavior` — omitting callback returns same payload/meta behavior.
 - **Test file:** `src/commands/agent.acp.test.ts`
 - **Test cases:**
-  1. `agentCommand_acp_session_ignores_onTextDelta_and_streams_normally` — Input: ACP session with `onTextDelta` provided plus ACP `text_delta` events `["ACP_", "OK"]`. Expected: final response remains `ACP_OK`; embedded runner not invoked.
+  1. `agentCommand_acp_forwards_text_delta_to_onTextDelta` — ACP `text_delta` events invoke callback while final payload remains aggregated text.
 
 ---
 
-### Stage 3 — Voice streaming sentence pipeline + barge-in gating
+### Stage 2 — Voice sentence streaming + generation gating
 
 Refactor `processSegment` in `src/discord/voice/manager.ts`:
 
-- start `agentCommand` with `onTextDelta`,
-- maintain `deltaBuffer` + sentence extraction state,
-- dispatch sentence TTS immediately when a complete sentence boundary is reached,
-- flush trailing text on completion,
-- guard each sentence TTS/playback with current generation token to prevent stale speech after barge-in.
+- kick off `agentCommand` with `onTextDelta`,
+- maintain streaming text buffer + sentence extraction state,
+- send each complete sentence to TTS immediately,
+- flush any non-empty trailing sentence when command resolves,
+- gate TTS/playback tasks by current generation token so stale work is dropped.
 
 **Acceptance criteria**
 
-- First playable audio can start before full LLM completion.
-- Sentence order preserved.
-- Interruption (new speaking event) prevents stale queued chunks from old generation from playing.
+- First playable audio can start before `agentCommand` resolves.
+- Sentence order is preserved.
+- Interruption increments generation and prevents stale queued chunks from prior generation playing.
 
-### Stage 3 Test Plan
+### Stage 2 Test Plan
 
 - **Test file:** `src/discord/voice/manager.test.ts`
 - **Test cases:**
-  1. `processSegment_starts_tts_on_first_complete_sentence_before_final_reply` — Input: mocked `agentCommand` invokes `onTextDelta` with `"Hello there."`, waits, then `" How are you today?"`, then resolves final payload. Expected: first `textToSpeech` call happens before `agentCommand` promise resolves; playback queue receives sentence 1 first.
-  2. `processSegment_buffers_incomplete_sentence_until_boundary` — Input: deltas `["This is incomplete", " but now complete."]`. Expected: no TTS call after first delta; one TTS call with `"This is incomplete but now complete."` after boundary arrives.
-  3. `processSegment_skips_stale_generation_after_barge_in` — Input: generation N emits first sentence, then simulated new speaking event increments generation to N+1 before N’s second sentence. Expected: N second-sentence TTS/playback is skipped; only generation N+1 chunks are played.
+  1. `processSegment_starts_tts_before_agent_completion` — first sentence TTS starts before agent promise resolves.
+  2. `processSegment_buffers_until_sentence_boundary` — incomplete text does not trigger TTS until boundary arrives.
+  3. `processSegment_flushes_tail_on_completion` — trailing non-punctuated remainder is spoken once on completion.
+  4. `processSegment_skips_stale_chunks_after_barge_in` — generation N chunks after interruption are skipped; generation N+1 proceeds.
 
 ---
 
-### Stage 4 — Final-response persistence and regression hardening
+### Stage 3 — Final response persistence regression hardening
 
-Ensure streaming path does not alter persisted final assistant content:
+Ensure streaming playback does not change canonical stored response behavior:
 
-- keep final `agentCommand` result handling intact,
-- verify session/transcript writes still use completed response text,
-- verify no duplicate assistant events/payload regressions.
+- final text persistence still comes from `agentCommand` completion payload,
+- no duplicate final text emission side effects from streaming callback usage.
 
 **Acceptance criteria**
 
-- Session history records full final response, not partial fragments only.
-- No duplicate final text emissions caused by combined streaming + completion handling.
+- Session history stores full final response text.
+- No duplicate final payloads or transcript entries caused by streaming callback.
 
-### Stage 4 Test Plan
+### Stage 3 Test Plan
 
 - **Test file:** `src/commands/agent.test.ts`
 - **Test cases:**
-  1. `agentCommand_preserves_final_payload_with_streaming_callback` — Input: embedded runner emits streamed deltas `["Hi", " there."]` and final payload `"Hi there."`. Expected: returned payload text is exactly `"Hi there."`; callback call count equals 2; no truncation.
-  2. `agentCommand_session_store_records_complete_text_when_streaming_used` — Input: seeded session store + streaming callback + final payload `"Complete answer."`. Expected: persisted session metadata/transcript reflects full `"Complete answer."`, not an intermediate partial.
+  1. `agentCommand_streaming_callback_does_not_mutate_final_payload` — callback receives deltas; returned payload remains exact final text.
+  2. `agentCommand_session_store_records_complete_text_with_streaming` — persisted session/transcript reflects complete final response.
 
 ## Alternatives Considered
 
-1. **Use only `onAgentEvent` and parse `assistant.delta` in voice layer**
-   - Rejected: broader event surface than needed, more coupling to event schema, and less explicit API contract for “text-only deltas.”
-2. **Use existing `onPartialReply` instead of adding `onTextDelta`**
-   - Rejected: `onPartialReply` carries cleaned cumulative text/media semantics, not guaranteed raw monotonic deltas; sentence streaming benefits from explicit delta callbacks.
-3. **Keep current blocking flow and optimize TTS only**
-   - Rejected: does not address root first-token/first-audio latency from waiting for full model completion.
+1. **Runner-level `onTextDelta` plumbing through `runEmbeddedAttempt`**
+   - Rejected: embedded streaming deltas already surface through assistant `onAgentEvent`; duplicating stream hooks adds complexity without improving behavior.
+2. **Voice subscribing directly to global `emitAgentEvent` bus**
+   - Rejected: tighter coupling to global event plumbing and run-id filtering; explicit `agentCommand` callback is cleaner and easier to test.
+3. **Keep current blocking flow and optimize only TTS generation**
+   - Rejected: does not remove the dominant latency from waiting for full LLM completion.
 
 ## Dependencies
 
-- Existing embedded stream event handling (`text_start`/`text_delta`/`text_end`) in `src/agents/pi-embedded-subscribe.handlers.messages.ts`.
+- Existing assistant delta emission from embedded subscriber (`src/agents/pi-embedded-subscribe.handlers.messages.ts`).
+- ACP `text_delta` events in `agentCommand` ACP path.
 - Voice TTS stack (`parseTtsDirectives`, `textToSpeech`, playback queueing) in `src/discord/voice/manager.ts`.
-- Existing or incoming barge-in generation counter behavior from `feat/voice-improvements`.
 
 ## Risks and Mitigations
 
-1. **Out-of-order or duplicate stream events**
-   - Mitigation: reuse existing monotonic delta normalization path already used for assistant streaming.
-2. **Sentence segmentation errors with directives or abbreviations**
-   - Mitigation: keep conservative boundary rules; flush residual tail text on completion.
-3. **Race conditions on interruption (old generation still enqueued)**
-   - Mitigation: validate generation token at both TTS generation time and playback execution time.
-4. **Regression for non-voice callers**
-   - Mitigation: optional callback only; add explicit no-callback regression tests in command layer.
+1. **Sentence boundary mistakes (abbreviations/newlines/fragments)**
+   - Mitigation: use conservative boundary detection, plus guaranteed final tail flush on completion.
+2. **Stale speech after interruption**
+   - Mitigation: generation token check before both TTS generation and playback execution.
+3. **Non-voice regression risk**
+   - Mitigation: callback is optional and isolated; add no-callback regression tests in command layer.
+4. **Directive interaction while streaming**
+   - Mitigation: retain existing `parseTtsDirectives` behavior for spoken text normalization before TTS dispatch.
 
-## Open Questions
+## Decisions (Resolved)
 
-1. Should sentence boundary detection in voice mode treat newlines as hard boundaries or punctuation-only boundaries?
-2. Should trailing non-punctuated tail text be spoken immediately on stream end or only if above a minimum character threshold?
-3. If `bargeInGeneration` is not yet present on the target branch, should this issue include introducing it, or depend on merge/cherry-pick from `feat/voice-improvements` first?
+1. Sentence boundaries use punctuation (`.`, `!`, `?`) and newline boundaries.
+2. Non-empty trailing text is flushed once when `agentCommand` completes.
+3. Barge-in generation token handling is implemented in this issue (do not depend on external branch state).
