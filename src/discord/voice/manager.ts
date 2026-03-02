@@ -764,6 +764,8 @@ export class DiscordVoiceManager {
       "[VOICE MODE] Your response will be spoken aloud via text-to-speech.",
       "Keep responses concise and conversational. Avoid markdown, lists, or code blocks.",
       "Spanish text automatically uses a Spanish voice. Prepend [slow] to speak slower.",
+      "Use [[tts:local_voice=NAME]] at the start of a line to speak in a specific voice.",
+      "Available voices: magnus_english, marto_spanish, british_english, elinor, marianne, edward, brandon, john_dashwood, mrs_dashwood, willoughby, fanny, lucy.",
     ].join(" ");
 
     const result = await agentCommand(
