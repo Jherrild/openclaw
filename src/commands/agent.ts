@@ -217,6 +217,7 @@ function runAgentAttempt(params: {
     streamParams: params.opts.streamParams,
     agentDir: params.agentDir,
     onAgentEvent: params.onAgentEvent,
+    onTextDelta: params.opts.onTextDelta,
   });
 }
 
@@ -407,6 +408,7 @@ export async function agentCommand(
             if (!event.text) {
               return;
             }
+            opts.onTextDelta?.(event.text);
             streamedText += event.text;
             emitAgentEvent({
               runId,

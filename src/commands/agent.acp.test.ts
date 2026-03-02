@@ -176,6 +176,47 @@ describe("agentCommand ACP runtime routing", () => {
     });
   });
 
+  it("invokes onTextDelta for output text_delta ACP events", async () => {
+    await withTempHome(async (home) => {
+      const storePath = path.join(home, "sessions.json");
+      writeAcpSessionStore(storePath);
+      mockConfig(home, storePath);
+      const onTextDelta = vi.fn();
+
+      const runTurn = vi.fn(async (paramsUnknown: unknown) => {
+        const params = paramsUnknown as {
+          onEvent?: (event: {
+            type: string;
+            stream?: string;
+            text?: string;
+            stopReason?: string;
+          }) => Promise<void>;
+        };
+        await params.onEvent?.({ type: "text_delta", stream: "reasoning", text: "skip" });
+        await params.onEvent?.({ type: "text_delta", stream: "output", text: "A" });
+        await params.onEvent?.({ type: "text_delta", text: "B" });
+        await params.onEvent?.({ type: "done", stopReason: "stop" });
+      });
+
+      mockAcpManager({
+        runTurn: (params: unknown) => runTurn(params),
+      });
+
+      await agentCommand(
+        {
+          message: "ping",
+          sessionKey: "agent:codex:acp:test",
+          onTextDelta,
+        },
+        runtime,
+      );
+
+      expect(onTextDelta).toHaveBeenNthCalledWith(1, "A");
+      expect(onTextDelta).toHaveBeenNthCalledWith(2, "B");
+      expect(onTextDelta).toHaveBeenCalledTimes(2);
+    });
+  });
+
   it("fails closed for ACP-shaped session keys missing ACP metadata", async () => {
     await withTempHome(async (home) => {
       const storePath = path.join(home, "sessions.json");

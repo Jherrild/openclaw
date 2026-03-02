@@ -129,6 +129,9 @@ export function handleMessageUpdate(
 
   const delta = typeof assistantRecord?.delta === "string" ? assistantRecord.delta : "";
   const content = typeof assistantRecord?.content === "string" ? assistantRecord.content : "";
+  if (evtType === "text_delta" && delta) {
+    void ctx.params.onTextDelta?.(delta);
+  }
 
   appendRawStream({
     ts: Date.now(),

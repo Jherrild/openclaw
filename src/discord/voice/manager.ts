@@ -111,6 +111,69 @@ function isNoiseOrEcho(transcript: string): boolean {
   return NOISE_HALLUCINATION_PATTERNS.some((pattern) => pattern.test(trimmed));
 }
 
+function resolveUnseenSuffix(previousText: string, nextText: string): string {
+  if (!nextText) {
+    return "";
+  }
+  if (!previousText) {
+    return nextText;
+  }
+  let commonPrefixLength = 0;
+  const maxPrefixLength = Math.min(previousText.length, nextText.length);
+  while (
+    commonPrefixLength < maxPrefixLength &&
+    previousText[commonPrefixLength] === nextText[commonPrefixLength]
+  ) {
+    commonPrefixLength += 1;
+  }
+  return nextText.slice(commonPrefixLength);
+}
+
+function consumeCompleteSpeechChunks(buffer: string): { chunks: string[]; remainder: string } {
+  const chunks: string[] = [];
+  const trailingPunctuation = new Set(['"', "'", ")", "]", "}"]);
+  let segmentStart = 0;
+  let index = 0;
+
+  while (index < buffer.length) {
+    const ch = buffer[index];
+    if (ch === "\n") {
+      const chunk = buffer.slice(segmentStart, index).trim();
+      if (chunk) {
+        chunks.push(chunk);
+      }
+      segmentStart = index + 1;
+      index = segmentStart;
+      continue;
+    }
+    if (ch === "." || ch === "!" || ch === "?") {
+      let boundary = index + 1;
+      while (boundary < buffer.length && trailingPunctuation.has(buffer[boundary])) {
+        boundary += 1;
+      }
+      const next = buffer[boundary];
+      if (next === undefined || /\s/.test(next)) {
+        const chunk = buffer.slice(segmentStart, boundary).trim();
+        if (chunk) {
+          chunks.push(chunk);
+        }
+        segmentStart = boundary;
+        while (segmentStart < buffer.length && /\s/.test(buffer[segmentStart])) {
+          segmentStart += 1;
+        }
+        index = segmentStart;
+        continue;
+      }
+    }
+    index += 1;
+  }
+
+  return {
+    chunks,
+    remainder: buffer.slice(segmentStart),
+  };
+}
+
 type VoiceOperationResult = {
   ok: boolean;
   message: string;
@@ -633,7 +696,7 @@ export class DiscordVoiceManager {
 
     // Log receiver debug info
     logger.info(
-      `discord voice: receiver registered. selfDeaf=${connection.joinConfig.selfDeaf} selfMute=${connection.joinConfig.selfMute}`,
+      `discord voice: receiver registered. selfDeaf=${connection.joinConfig?.selfDeaf} selfMute=${connection.joinConfig?.selfMute}`,
     );
 
     this.sessions.set(guildId, entry);
@@ -796,6 +859,77 @@ export class DiscordVoiceManager {
       `Available voices: ${voiceList}.`,
     ].join(" ");
 
+    const { cfg: ttsCfg, resolved: ttsConfig } = resolveVoiceTtsConfig({
+      cfg: this.params.cfg,
+      override: this.params.discordConfig.voice?.tts,
+    });
+    let streamedRawText = "";
+    let streamedSpeakText = "";
+    let pendingSpeakBuffer = "";
+    let activeDirective = parseTtsDirectives("", ttsConfig.modelOverrides);
+    let chunkQueue = Promise.resolve();
+    const plannedChunks: string[] = [];
+    let spokenChunkCount = 0;
+
+    const queueSpokenChunk = (chunk: string, directiveText: typeof activeDirective) => {
+      const trimmedChunk = chunk.trim();
+      if (!trimmedChunk) {
+        return;
+      }
+      plannedChunks.push(trimmedChunk);
+      chunkQueue = chunkQueue.then(async () => {
+        if (entry.bargeInGeneration !== generationAtStart) {
+          return;
+        }
+        const ttsResult = await textToSpeech({
+          text: trimmedChunk,
+          cfg: ttsCfg,
+          channel: "discord",
+          channelId: entry.channelId,
+          overrides: directiveText.overrides,
+        });
+        if (!ttsResult.success || !ttsResult.audioPath) {
+          logger.warn(`discord voice: TTS chunk failed: ${ttsResult.error ?? "unknown error"}`);
+          return;
+        }
+        if (entry.bargeInGeneration !== generationAtStart) {
+          return;
+        }
+        spokenChunkCount += 1;
+        const audioPath = ttsResult.audioPath;
+        logVoiceVerbose(
+          `tts chunk ok (${trimmedChunk.length} chars): guild ${entry.guildId} channel ${entry.channelId}`,
+        );
+        this.enqueuePlayback(entry, async () => {
+          if (entry.bargeInGeneration !== generationAtStart) {
+            return;
+          }
+          logVoiceVerbose(
+            `playback start: guild ${entry.guildId} channel ${entry.channelId} file ${path.basename(audioPath)}`,
+          );
+          const resource = createAudioResource(audioPath);
+          entry.player.play(resource);
+          await entersState(
+            entry.player,
+            AudioPlayerStatus.Playing,
+            PLAYBACK_READY_TIMEOUT_MS,
+          ).catch(() => undefined);
+          await entersState(entry.player, AudioPlayerStatus.Idle, SPEAKING_READY_TIMEOUT_MS).catch(
+            () => undefined,
+          );
+          logVoiceVerbose(`playback done: guild ${entry.guildId} channel ${entry.channelId}`);
+        });
+      });
+    };
+
+    const flushCompletedSentences = () => {
+      const { chunks, remainder } = consumeCompleteSpeechChunks(pendingSpeakBuffer);
+      pendingSpeakBuffer = remainder;
+      for (const chunk of chunks) {
+        queueSpokenChunk(chunk, activeDirective);
+      }
+    };
+
     const result = await agentCommand(
       {
         message: `${voiceContext}\n\n${prompt}`,
@@ -803,17 +937,22 @@ export class DiscordVoiceManager {
         agentId: entry.route.agentId,
         messageChannel: "discord",
         deliver: false,
+        onTextDelta: (delta) => {
+          streamedRawText += delta;
+          activeDirective = parseTtsDirectives(streamedRawText, ttsConfig.modelOverrides);
+          const nextSpeakText =
+            activeDirective.overrides.ttsText ?? activeDirective.cleanedText.trim();
+          const unseenSuffix = resolveUnseenSuffix(streamedSpeakText, nextSpeakText);
+          streamedSpeakText = nextSpeakText;
+          if (!unseenSuffix) {
+            return;
+          }
+          pendingSpeakBuffer += unseenSuffix;
+          flushCompletedSentences();
+        },
       },
       this.params.runtime,
     );
-
-    // If user barged in while we were waiting for the LLM, discard this response
-    if (entry.bargeInGeneration !== generationAtStart) {
-      logVoiceVerbose(
-        `response discarded (barge-in during LLM): guild ${entry.guildId} user ${userId}`,
-      );
-      return;
-    }
 
     const replyText = (result.payloads ?? [])
       .map((payload) => payload.text)
@@ -821,95 +960,41 @@ export class DiscordVoiceManager {
       .join("\n")
       .trim();
 
-    if (!replyText) {
+    if (replyText) {
       logVoiceVerbose(
-        `reply empty: guild ${entry.guildId} channel ${entry.channelId} user ${userId}`,
+        `reply ok (${replyText.length} chars): guild ${entry.guildId} channel ${entry.channelId}`,
       );
-      return;
+      const finalDirective = parseTtsDirectives(replyText, ttsConfig.modelOverrides);
+      activeDirective = finalDirective;
+      const finalSpeakText = finalDirective.overrides.ttsText ?? finalDirective.cleanedText.trim();
+      const unseenSuffix = resolveUnseenSuffix(streamedSpeakText, finalSpeakText);
+      streamedSpeakText = finalSpeakText;
+      if (unseenSuffix) {
+        pendingSpeakBuffer += unseenSuffix;
+      }
     }
-    logVoiceVerbose(
-      `reply ok (${replyText.length} chars): guild ${entry.guildId} channel ${entry.channelId}`,
-    );
 
-    const { cfg: ttsCfg, resolved: ttsConfig } = resolveVoiceTtsConfig({
-      cfg: this.params.cfg,
-      override: this.params.discordConfig.voice?.tts,
-    });
-    const directive = parseTtsDirectives(replyText, ttsConfig.modelOverrides);
-    const speakText = directive.overrides.ttsText ?? directive.cleanedText.trim();
-    if (!speakText) {
+    const trailingFragment = pendingSpeakBuffer.trim();
+    pendingSpeakBuffer = "";
+    if (trailingFragment) {
+      queueSpokenChunk(trailingFragment, activeDirective);
+    }
+
+    if (plannedChunks.length === 0) {
       logVoiceVerbose(
         `tts skipped (empty): guild ${entry.guildId} channel ${entry.channelId} user ${userId}`,
       );
       return;
     }
 
-    // Split into sentences for pipelined TTS — first sentence plays while the rest generate
-    const sentences = speakText
-      .split(/(?<=[.!?])\s+/)
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
-    // Merge very short fragments with the previous sentence
-    const merged: string[] = [];
-    for (const s of sentences) {
-      if (merged.length > 0 && s.length < 20) {
-        merged[merged.length - 1] += " " + s;
-      } else {
-        merged.push(s);
-      }
-    }
-    const chunks = merged.length > 0 ? merged : [speakText];
-
     logVoiceVerbose(
-      `tts streaming ${chunks.length} sentence(s): guild ${entry.guildId} channel ${entry.channelId}`,
+      `tts streaming ${plannedChunks.length} sentence(s): guild ${entry.guildId} channel ${entry.channelId}`,
     );
+    await chunkQueue;
 
-    let lastSpokenChunkIndex = -1;
-    for (let i = 0; i < chunks.length; i++) {
-      const chunk = chunks[i];
-      // Abort remaining TTS if user barged in
-      if (entry.bargeInGeneration !== generationAtStart) {
-        logVoiceVerbose(
-          `tts aborted (barge-in): skipping ${i + 1}/${chunks.length} guild ${entry.guildId}`,
-        );
-        break;
-      }
-      const ttsResult = await textToSpeech({
-        text: chunk,
-        cfg: ttsCfg,
-        channel: "discord",
-        channelId: entry.channelId,
-        overrides: directive.overrides,
-      });
-      if (!ttsResult.success || !ttsResult.audioPath) {
-        logger.warn(`discord voice: TTS chunk failed: ${ttsResult.error ?? "unknown error"}`);
-        continue;
-      }
-      const audioPath = ttsResult.audioPath;
-      logVoiceVerbose(
-        `tts chunk ok (${chunk.length} chars): guild ${entry.guildId} channel ${entry.channelId}`,
-      );
-      lastSpokenChunkIndex = i;
-
-      this.enqueuePlayback(entry, async () => {
-        logVoiceVerbose(
-          `playback start: guild ${entry.guildId} channel ${entry.channelId} file ${path.basename(audioPath)}`,
-        );
-        const resource = createAudioResource(audioPath);
-        entry.player.play(resource);
-        await entersState(entry.player, AudioPlayerStatus.Playing, PLAYBACK_READY_TIMEOUT_MS).catch(
-          () => undefined,
-        );
-        await entersState(entry.player, AudioPlayerStatus.Idle, SPEAKING_READY_TIMEOUT_MS).catch(
-          () => undefined,
-        );
-        logVoiceVerbose(`playback done: guild ${entry.guildId} channel ${entry.channelId}`);
-      });
-    }
-
-    // If barge-in truncated the response, notify the agent what the user didn't hear
-    if (entry.bargeInGeneration !== generationAtStart && lastSpokenChunkIndex < chunks.length - 1) {
-      const unspoken = chunks.slice(lastSpokenChunkIndex + 1).join(" ");
+    // If barge-in truncated the response, notify the agent what the user didn't hear.
+    if (entry.bargeInGeneration !== generationAtStart && spokenChunkCount < plannedChunks.length) {
+      const unspoken = plannedChunks.slice(spokenChunkCount).join(" ");
       if (unspoken.trim()) {
         logVoiceVerbose(
           `injecting barge-in context (${unspoken.length} chars unspoken): guild ${entry.guildId}`,

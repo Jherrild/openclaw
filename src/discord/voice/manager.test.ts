@@ -7,6 +7,10 @@ const {
   entersStateMock,
   createAudioPlayerMock,
   resolveAgentRouteMock,
+  agentCommandMock,
+  textToSpeechMock,
+  resolveTtsConfigMock,
+  runCapabilityMock,
 } = vi.hoisted(() => {
   type EventHandler = (...args: unknown[]) => unknown;
   type MockConnection = {
@@ -62,6 +66,28 @@ const {
       state: { status: "idle" },
     })),
     resolveAgentRouteMock: vi.fn(() => ({ agentId: "agent-1", sessionKey: "discord:g1:c1" })),
+    agentCommandMock: vi.fn(),
+    resolveTtsConfigMock: vi.fn(() => ({
+      modelOverrides: {
+        enabled: true,
+        allowProvider: true,
+        allowVoice: true,
+        allowText: true,
+        allowSpeed: true,
+        allowStyle: true,
+        allowLanguage: true,
+        allowModel: true,
+        allowedProviders: ["openai", "elevenlabs", "edge", "local"],
+        allowedModelRefs: [],
+      },
+    })),
+    textToSpeechMock: vi.fn(async () => ({
+      success: true,
+      audioPath: "/tmp/tts.wav",
+    })),
+    runCapabilityMock: vi.fn(async () => ({
+      outputs: [{ kind: "audio.transcription", text: "hello from user" }],
+    })),
   };
 });
 
@@ -83,6 +109,24 @@ vi.mock("@discordjs/voice", () => ({
 
 vi.mock("../../routing/resolve-route.js", () => ({
   resolveAgentRoute: resolveAgentRouteMock,
+}));
+
+vi.mock("../../commands/agent.js", () => ({
+  agentCommand: agentCommandMock,
+}));
+
+vi.mock("../../tts/tts.js", () => ({
+  resolveTtsConfig: resolveTtsConfigMock,
+  textToSpeech: textToSpeechMock,
+}));
+
+vi.mock("../../media-understanding/runner.js", () => ({
+  buildProviderRegistry: vi.fn(() => ({})),
+  createMediaAttachmentCache: vi.fn(() => ({
+    cleanup: vi.fn(async () => undefined),
+  })),
+  normalizeMediaAttachments: vi.fn(() => [{ id: "attachment-1" }]),
+  runCapability: runCapabilityMock,
 }));
 
 let managerModule: typeof import("./manager.js");
@@ -122,6 +166,21 @@ describe("DiscordVoiceManager", () => {
     entersStateMock.mockResolvedValue(undefined);
     createAudioPlayerMock.mockClear();
     resolveAgentRouteMock.mockClear();
+    agentCommandMock.mockReset();
+    agentCommandMock.mockResolvedValue({
+      payloads: [{ text: "ok" }],
+      meta: { durationMs: 5 },
+    });
+    textToSpeechMock.mockReset();
+    textToSpeechMock.mockResolvedValue({
+      success: true,
+      audioPath: "/tmp/tts.wav",
+    });
+    resolveTtsConfigMock.mockClear();
+    runCapabilityMock.mockReset();
+    runCapabilityMock.mockResolvedValue({
+      outputs: [{ kind: "audio.transcription", text: "hello from user" }],
+    });
   });
 
   it("keeps the new session when an old disconnected handler fires", async () => {
@@ -270,5 +329,128 @@ describe("DiscordVoiceManager", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(joinVoiceChannelMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("starts TTS before agent command resolves when first sentence streams", async () => {
+    const manager = new managerModule.DiscordVoiceManager({
+      client: createClient() as never,
+      cfg: {},
+      discordConfig: {},
+      accountId: "default",
+      runtime: createRuntime(),
+    });
+    const entry = {
+      guildId: "g1",
+      channelId: "c1",
+      sessionChannelId: "discord:g1:c1",
+      route: { agentId: "agent-1", sessionKey: "discord:g1:c1" },
+      connection: createConnectionMock(),
+      player: createAudioPlayerMock(),
+      playbackQueue: Promise.resolve(),
+      processingQueue: Promise.resolve(),
+      activeSpeakers: new Set<string>(),
+      bargeInGeneration: 1,
+      decryptFailureCount: 0,
+      lastDecryptFailureAt: 0,
+      decryptRecoveryInFlight: false,
+      stop: vi.fn(),
+    };
+
+    let resolveAgent: (() => void) | undefined;
+    agentCommandMock.mockImplementationOnce(
+      async (opts: { onTextDelta?: (delta: string) => void }) => {
+        opts.onTextDelta?.("First sentence. ");
+        await new Promise<void>((resolve) => {
+          resolveAgent = resolve;
+        });
+        return {
+          payloads: [{ text: "First sentence. Final tail." }],
+          meta: { durationMs: 5 },
+        };
+      },
+    );
+
+    const processPromise = (
+      manager as unknown as {
+        processSegment: (params: {
+          entry: unknown;
+          wavPath: string;
+          userId: string;
+          durationSeconds: number;
+        }) => Promise<void>;
+      }
+    ).processSegment({
+      entry,
+      wavPath: "/tmp/input.wav",
+      userId: "u1",
+      durationSeconds: 1,
+    });
+
+    await vi.waitFor(() =>
+      expect(textToSpeechMock).toHaveBeenCalledWith(
+        expect.objectContaining({ text: "First sentence." }),
+      ),
+    );
+
+    resolveAgent?.();
+    await processPromise;
+  });
+
+  it("flushes only unseen suffix from final payload", async () => {
+    const manager = new managerModule.DiscordVoiceManager({
+      client: createClient() as never,
+      cfg: {},
+      discordConfig: {},
+      accountId: "default",
+      runtime: createRuntime(),
+    });
+    const entry = {
+      guildId: "g1",
+      channelId: "c1",
+      sessionChannelId: "discord:g1:c1",
+      route: { agentId: "agent-1", sessionKey: "discord:g1:c1" },
+      connection: createConnectionMock(),
+      player: createAudioPlayerMock(),
+      playbackQueue: Promise.resolve(),
+      processingQueue: Promise.resolve(),
+      activeSpeakers: new Set<string>(),
+      bargeInGeneration: 1,
+      decryptFailureCount: 0,
+      lastDecryptFailureAt: 0,
+      decryptRecoveryInFlight: false,
+      stop: vi.fn(),
+    };
+
+    agentCommandMock.mockImplementationOnce(
+      async (opts: { onTextDelta?: (delta: string) => void }) => {
+        opts.onTextDelta?.("Hello ");
+        opts.onTextDelta?.("world.");
+        return {
+          payloads: [{ text: "Hello world. Extra tail." }],
+          meta: { durationMs: 5 },
+        };
+      },
+    );
+
+    await (
+      manager as unknown as {
+        processSegment: (params: {
+          entry: unknown;
+          wavPath: string;
+          userId: string;
+          durationSeconds: number;
+        }) => Promise<void>;
+      }
+    ).processSegment({
+      entry,
+      wavPath: "/tmp/input.wav",
+      userId: "u1",
+      durationSeconds: 1,
+    });
+
+    const spokenTexts = textToSpeechMock.mock.calls.map(
+      ([args]) => (args as { text: string }).text,
+    );
+    expect(spokenTexts).toEqual(["Hello world.", "Extra tail."]);
   });
 });

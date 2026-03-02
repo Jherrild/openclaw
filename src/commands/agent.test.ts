@@ -776,6 +776,19 @@ describe("agentCommand", () => {
     });
   });
 
+  it("forwards onTextDelta to embedded runs", async () => {
+    await withTempHome(async (home) => {
+      const store = path.join(home, "sessions.json");
+      mockConfig(home, store);
+      const onTextDelta = vi.fn();
+
+      await agentCommand({ message: "hi", to: "+1555", onTextDelta }, runtime);
+
+      const callArgs = vi.mocked(runEmbeddedPiAgent).mock.calls.at(-1)?.[0];
+      expect(callArgs?.onTextDelta).toBe(onTextDelta);
+    });
+  });
+
   it("logs output when delivery is disabled", async () => {
     await withTempHome(async (home) => {
       await runWithDefaultAgentConfig({
