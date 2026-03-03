@@ -233,6 +233,14 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     profiles: [],
     includeInOpenClawGroup: true,
   },
+  {
+    id: "play_audio",
+    label: "play_audio",
+    description: "Play audio files in Discord voice channel",
+    sectionId: "media",
+    profiles: [],
+    includeInOpenClawGroup: true,
+  },
 ];
 
 const CORE_TOOL_BY_ID = new Map<string, CoreToolDefinition>(

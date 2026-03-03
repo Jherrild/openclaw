@@ -146,6 +146,7 @@ const TRUSTED_TOOL_RESULT_MEDIA = new Set([
   "memory_search",
   "message",
   "nodes",
+  "play_audio",
   "process",
   "read",
   "session_status",
